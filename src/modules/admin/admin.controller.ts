@@ -104,3 +104,25 @@ export const financialSummary = async (_req: AuthRequest, res: Response): Promis
     sendSuccess(res, data);
   } catch (err: unknown) { sendError(res, (err as Error).message); }
 };
+
+// ─── Withdrawals ──────────────────────────────────────────
+export const listWithdrawals = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const data = await adminService.getAllWithdrawals();
+    sendSuccess(res, data);
+  } catch (err: unknown) { sendError(res, (err as Error).message); }
+};
+
+export const approveWithdrawalCtrl = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const data = await adminService.approveWithdrawal(String(req.params.id));
+    sendSuccess(res, data, 'উইথড্র অ্যাপ্রুভ করা হয়েছে');
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};
+
+export const rejectWithdrawalCtrl = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const data = await adminService.rejectWithdrawal(String(req.params.id), req.body.note);
+    sendSuccess(res, data, 'উইথড্র প্রত্যাখ্যান করা হয়েছে');
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};

@@ -5,7 +5,7 @@ import {
   addPackage, listPackages, editPackage,
   getConfig, updateConfig,
   pendingApprovals, approveUserCtrl, rejectUserCtrl, setOrderLimit,
-  financialSummary,
+  financialSummary, listWithdrawals, approveWithdrawalCtrl, rejectWithdrawalCtrl,
 } from './admin.controller';
 
 const router = Router();
@@ -34,5 +34,8 @@ router.patch('/kitchen/:id/order-limit', ...adminOnly, setOrderLimit);
 
 // Financial
 router.get('/finance', ...adminOnly, financialSummary);
+router.get('/withdrawals', ...adminOnly, listWithdrawals);
+router.patch('/withdrawals/:id/approve', ...adminOnly, approveWithdrawalCtrl);
+router.patch('/withdrawals/:id/reject', ...adminOnly, rejectWithdrawalCtrl);
 
 export default router;

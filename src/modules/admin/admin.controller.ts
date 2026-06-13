@@ -70,9 +70,9 @@ export const updateConfig = async (req: AuthRequest, res: Response): Promise<voi
 };
 
 // ─── Approvals ────────────────────────────────────────────
-export const pendingApprovals = async (_req: AuthRequest, res: Response): Promise<void> => {
+export const pendingApprovals = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const users = await adminService.getPendingApprovals();
+    const users = await adminService.getPendingApprovals(req.query.status as string | undefined);
     sendSuccess(res, users);
   } catch (err: unknown) { sendError(res, (err as Error).message); }
 };

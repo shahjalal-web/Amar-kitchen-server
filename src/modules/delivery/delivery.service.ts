@@ -9,6 +9,12 @@ export const getAvailablePickups = async (area: string) =>
     .populate('kitchen user items.foodItem')
     .sort({ createdAt: 1 });
 
+// ─── My Active Deliveries (picked up, not yet delivered) ────
+export const getMyActiveDeliveries = async (deliveryBoyId: string) =>
+  Order.find({ deliveryBoy: deliveryBoyId, status: 'picked_up' })
+    .populate('kitchen user items.foodItem')
+    .sort({ updatedAt: -1 });
+
 // ─── Scan Unique Code → Ownership Transfer ───────────────
 export const scanCode = async (deliveryBoyId: string, uniqueCode: string) => {
   const order = await Order.findOne({ uniqueCode });

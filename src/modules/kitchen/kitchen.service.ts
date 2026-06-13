@@ -1,9 +1,13 @@
 import { DailyMenu, Withdrawal } from './kitchen.model';
 import { User } from '../auth/auth.model';
 import { io } from '../../index';
-import { GlobalConfig } from '../admin/admin.model';
+import { GlobalConfig, FoodItem } from '../admin/admin.model';
 
 const todayDate = () => new Date().toISOString().split('T')[0];
+
+// ─── Food Library (read-only for kitchen) ───────────────
+export const getActiveFoodItems = () =>
+  FoodItem.find({ isActive: true }).sort({ category: 1, name: 1 });
 
 // ─── Menu ─────────────────────────────────────────────────
 export const setTodayMenu = async (

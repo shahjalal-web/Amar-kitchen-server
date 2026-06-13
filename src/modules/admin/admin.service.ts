@@ -51,8 +51,16 @@ export const updateGlobalConfig = (adminId: string, data: object) =>
   );
 
 // ─── Approvals ────────────────────────────────────────────
-export const getPendingApprovals = () =>
-  User.find({ isApproved: false, isActive: true, role: { $in: ['kitchen', 'delivery'] } }).select('-firebaseUid');
+export const getPendingApprovals = (status?: string) => {
+  const filter: Record<string, unknown> = { role: { $in: ['kitchen', 'delivery'] } };
+
+  if (status === 'pending') Object.assign(filter, { isApproved: false, isActive: true });
+  else if (status === 'approved') Object.assign(filter, { isApproved: true, isActive: true });
+  else if (status === 'rejected') Object.assign(filter, { isActive: false });
+  // status === 'all' (or unspecified): no extra filter
+
+  return User.find(filter).select('-firebaseUid');
+};
 
 export const approveUser = (userId: string) =>
   User.findByIdAndUpdate(userId, { isApproved: true }, { new: true });

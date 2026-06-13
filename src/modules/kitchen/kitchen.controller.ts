@@ -60,3 +60,10 @@ export const getDeliveryCharge = async (req: AuthRequest, res: Response): Promis
     sendSuccess(res, { charge });
   } catch (err: unknown) { sendError(res, (err as Error).message); }
 };
+
+export const listFoods = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const foods = await kitchenService.getActiveFoodItems();
+    sendSuccess(res, foods);
+  } catch (err: unknown) { sendError(res, (err as Error).message); }
+};

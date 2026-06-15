@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Order } from './order.model';
 import { User } from '../auth/auth.model';
+import { Area } from '../area/area.model';
 import { calcDeliveryCharge } from '../kitchen/kitchen.service';
 import { io } from '../../index';
 
@@ -13,16 +14,40 @@ export const placeOrder = async (userId: string, data: {
   items: { foodItem: string; quantity: number; price: number }[];
   totalAmount: number;
   paymentMethod: 'sslcommerz' | 'cash';
+  deliveryMode?: 'live' | 'area';
+  deliveryLocation?: { lat: number; lng: number };
+  areaId?: string;
+  buildingName?: string;
+  deliveryAddress?: string;
 }) => {
   const user = await User.findById(userId);
   if (!user) throw new Error('ব্যবহারকারী পাওয়া যায়নি');
+
+  let area = user.area || '';
+  let areaId: string | undefined;
+  let deliveryLocation: { type: 'Point'; coordinates: [number, number] } | undefined;
+
+  if (data.deliveryMode === 'area' && data.areaId) {
+    const selectedArea = await Area.findById(data.areaId);
+    if (!selectedArea) throw new Error('এরিয়া পাওয়া যায়নি');
+    area = selectedArea.name;
+    areaId = selectedArea.id;
+  } else if (data.deliveryMode === 'live' && data.deliveryLocation) {
+    deliveryLocation = {
+      type: 'Point',
+      coordinates: [data.deliveryLocation.lng, data.deliveryLocation.lat],
+    };
+  }
+
+  const buildingName = data.buildingName ?? user.buildingName ?? '';
+  const deliveryAddress = data.deliveryAddress ?? `${user.buildingName}, ${user.buildingAddress}`;
 
   // একই বিল্ডিংয়ে আজকের active অর্ডার গণনা করো (cluster discount)
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const activeCount = await Order.countDocuments({
-    buildingName: user.buildingName,
-    area: user.area,
+    buildingName,
+    area,
     status: { $in: ['pending', 'accepted', 'ready', 'picked_up'] },
     createdAt: { $gte: today },
   });
@@ -37,9 +62,11 @@ export const placeOrder = async (userId: string, data: {
     totalAmount: data.totalAmount,
     deliveryCharge,
     uniqueCode,
-    buildingName: user.buildingName || '',
-    deliveryAddress: `${user.buildingName}, ${user.buildingAddress}`,
-    area: user.area || '',
+    buildingName,
+    deliveryAddress,
+    area,
+    areaId,
+    deliveryLocation,
     paymentMethod: data.paymentMethod,
   });
 

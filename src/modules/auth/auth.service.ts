@@ -64,3 +64,10 @@ export const loginUser = async (firebaseToken: string) => {
 
 export const getProfile = (userId: string) =>
   User.findById(userId).select('-firebaseUid');
+
+export const updateLocation = (userId: string, lat: number, lng: number) =>
+  User.findByIdAndUpdate(
+    userId,
+    { location: { type: 'Point', coordinates: [lng, lat] } },
+    { new: true }
+  ).select('-firebaseUid');

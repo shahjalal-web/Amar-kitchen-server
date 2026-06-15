@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { registerUser, loginUser, getProfile } from './auth.service';
+import { registerUser, loginUser, getProfile, updateLocation } from './auth.service';
 import { sendSuccess, sendError } from '../../utils/response';
 import { AuthRequest } from '../../middleware/auth';
 
@@ -26,6 +26,16 @@ export const profile = async (req: AuthRequest, res: Response): Promise<void> =>
     const user = await getProfile(req.user!.userId);
     if (!user) { sendError(res, 'ব্যবহারকারী পাওয়া যায়নি', 404); return; }
     sendSuccess(res, user, 'প্রোফাইল পাওয়া গেছে');
+  } catch (err: unknown) {
+    sendError(res, (err as Error).message, 400);
+  }
+};
+
+export const updateProfileLocation = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { lat, lng } = req.body;
+    const user = await updateLocation(req.user!.userId, lat, lng);
+    sendSuccess(res, user, 'লোকেশন আপডেট হয়েছে');
   } catch (err: unknown) {
     sendError(res, (err as Error).message, 400);
   }

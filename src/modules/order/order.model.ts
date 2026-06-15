@@ -28,6 +28,12 @@ export interface IOrder extends Document {
   buildingName: string;
   deliveryAddress: string;
   area: string;
+  // delivery location/area (live location বা admin-area ভিত্তিক অর্ডারের জন্য)
+  deliveryLocation?: {
+    type: 'Point';
+    coordinates: [number, number]; // [lng, lat]
+  };
+  areaId?: mongoose.Types.ObjectId;
   // resell fields
   isResell: boolean;
   originalUser?: mongoose.Types.ObjectId;
@@ -65,6 +71,11 @@ const orderSchema = new Schema<IOrder>(
     buildingName: { type: String, required: true },
     deliveryAddress: { type: String, required: true },
     area: { type: String, required: true },
+    deliveryLocation: {
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number] },
+    },
+    areaId: { type: Schema.Types.ObjectId, ref: 'Area' },
     isResell: { type: Boolean, default: false },
     originalUser: { type: Schema.Types.ObjectId, ref: 'User' },
     resellPrice: { type: Number },
@@ -78,5 +89,6 @@ const orderSchema = new Schema<IOrder>(
 );
 
 orderSchema.index({ buildingName: 1, area: 1, status: 1 });
+orderSchema.index({ deliveryLocation: '2dsphere' }, { sparse: true });
 
 export const Order = mongoose.model<IOrder>('Order', orderSchema);

@@ -18,10 +18,13 @@ export interface IUser extends Document {
   buildingName?: string;
   buildingAddress?: string;
   area?: string;
+  // লাইভ/প্রোফাইল লোকেশন — সব রোলের জন্য (kitchen: কিচেনের লোকেশন, delivery: ডেলিভারি বয়ের বেস লোকেশন, user: লাইভ লোকেশন)
   location?: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
   };
+  // delivery only — admin-তৈরি এরিয়া থেকে নিজের ডেলিভারি এরিয়া বেছে নেওয়া
+  deliveryAreaIds?: mongoose.Types.ObjectId[];
   // kitchen only
   kitchenName?: string;
   kitchenDescription?: string;
@@ -56,6 +59,7 @@ const userSchema = new Schema<IUser>(
       type: { type: String, enum: ['Point'] },
       coordinates: { type: [Number] },
     },
+    deliveryAreaIds: [{ type: Schema.Types.ObjectId, ref: 'Area' }],
     kitchenName: { type: String },
     kitchenDescription: { type: String },
     rating: { type: Number, default: 0 },

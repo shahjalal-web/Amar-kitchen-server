@@ -2,6 +2,7 @@ import { DailyMenu, Withdrawal } from './kitchen.model';
 import { User } from '../auth/auth.model';
 import { io } from '../../index';
 import { GlobalConfig, FoodItem } from '../admin/admin.model';
+import { findKitchensNear } from '../area/area.service';
 
 const todayDate = () => new Date().toISOString().split('T')[0];
 
@@ -33,9 +34,9 @@ export const getTodayMenu = (kitchenId: string) =>
     'items.foodItem freeItems'
   );
 
-// কাছের কিচেনের আজকের মেনু (ব্যবহারকারীর এলাকা অনুযায়ী)
-export const getNearbyKitchenMenus = async (area: string) => {
-  const kitchens = await User.find({ role: 'kitchen', isApproved: true, area });
+// কাছের কিচেনের আজকের মেনু (লাইভ লোকেশন বা এরিয়ার ৫ কিমির মধ্যে)
+export const getNearbyKitchenMenus = async (lng: number, lat: number, radiusKm: number) => {
+  const kitchens = await findKitchensNear(lng, lat, radiusKm);
   const kitchenIds = kitchens.map((k) => k._id);
   return DailyMenu.find({
     kitchen: { $in: kitchenIds },

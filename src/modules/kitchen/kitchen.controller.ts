@@ -2,6 +2,9 @@ import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth';
 import { sendSuccess, sendError } from '../../utils/response';
 import * as kitchenService from './kitchen.service';
+import { Area } from '../area/area.model';
+
+const DEFAULT_RADIUS_KM = 5;
 
 export const setMenu = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -19,7 +22,25 @@ export const getMyMenu = async (req: AuthRequest, res: Response): Promise<void> 
 
 export const getNearbyMenus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const menus = await kitchenService.getNearbyKitchenMenus(req.query.area as string);
+    const { areaId, lat, lng } = req.query;
+
+    let lng_: number, lat_: number, radiusKm: number;
+
+    if (areaId) {
+      const area = await Area.findById(areaId as string);
+      if (!area) { sendError(res, 'এরিয়া পাওয়া যায়নি', 404); return; }
+      [lng_, lat_] = area.location.coordinates;
+      radiusKm = area.radiusKm;
+    } else if (lat && lng) {
+      lat_ = Number(lat);
+      lng_ = Number(lng);
+      radiusKm = DEFAULT_RADIUS_KM;
+    } else {
+      sendError(res, 'লোকেশন বা এরিয়া দিন', 400);
+      return;
+    }
+
+    const menus = await kitchenService.getNearbyKitchenMenus(lng_, lat_, radiusKm);
     sendSuccess(res, menus);
   } catch (err: unknown) { sendError(res, (err as Error).message); }
 };

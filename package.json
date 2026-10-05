@@ -46,5 +46,8 @@
   },
   "devDependencies": {
     "@types/nodemailer": "^8.0.2"
+  },
+  "overrides": {
+    "jwks-rsa": "3.2.2"
   }
 }

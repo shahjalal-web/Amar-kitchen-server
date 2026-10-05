@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { DailyMenu, Withdrawal } from './kitchen.model';
 import { User } from '../auth/auth.model';
-import { io } from '../../index';
+import { emit } from '../../utils/realtime';
 import { GlobalConfig, FoodItem, IFoodItem } from '../admin/admin.model';
 import { Area } from '../location/location.model';
 import { findNearbyAreas, AREA_POPULATE } from '../location/location.service';
@@ -216,7 +216,7 @@ export const markReadyForPickup = async (kitchenId: string) => {
     await transitionOrder({ userId: kitchenId, role: 'kitchen' }, o.id, 'ready');
   }
 
-  io.emit('kitchen:ready', { kitchenId, date: todayDate() });
+  emit('kitchen:ready', { kitchenId, date: todayDate() });
   return { menu, readyOrders: accepted.length };
 };
 

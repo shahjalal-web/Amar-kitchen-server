@@ -8,7 +8,7 @@ import { DeliveryTask } from '../delivery/delivery.model';
 import { GlobalConfig } from '../admin/admin.model';
 import { calcDeliveryCharge } from '../kitchen/kitchen.service';
 import { notifyNewOrder, notifyOrderStatus, notifyDeliveryAssigned, notifyDeliveryOtp } from '../../utils/notify';
-import { io } from '../../index';
+import { emit } from '../../utils/realtime';
 
 type ActorRole = IStatusEvent['role'];
 
@@ -48,9 +48,9 @@ export const pushStatus = (order: IOrder, status: OrderStatus, role: ActorRole, 
 
 const emitUpdate = (order: IOrder) => {
   const payload = { orderId: order._id, status: order.status };
-  io.emit(`user:order-update:${order.user}`, payload);
-  io.emit(`kitchen:order-update:${order.kitchen}`, payload);
-  if (order.deliveryBoy) io.emit(`delivery:order-update:${order.deliveryBoy}`, payload);
+  emit(`user:order-update:${order.user}`, payload);
+  emit(`kitchen:order-update:${order.kitchen}`, payload);
+  if (order.deliveryBoy) emit(`delivery:order-update:${order.deliveryBoy}`, payload);
 };
 
 // ─── Place Order ─────────────────────────────────────────
@@ -163,7 +163,7 @@ export const placeOrder = async (userId: string, data: PlaceOrderDTO) => {
     await user.save();
   }
 
-  io.emit(`kitchen:new-order:${kitchen._id}`, order);
+  emit(`kitchen:new-order:${kitchen._id}`, order);
   notifyNewOrder(order).catch(console.error);
   return order;
 };
@@ -363,7 +363,7 @@ export const cancelOrder = async (userId: string, orderId: string) => {
   order.resellPrice = Math.round(order.totalAmount * 0.85); // ১৫% ছাড়ে resell
   await order.save();
 
-  io.emit('resell:new', order); // সবাইকে নোটিফাই করো
+  emit('resell:new', order); // সবাইকে নোটিফাই করো
   notifyOrderStatus(order, 'user').catch(console.error);
   return { order, refunded: false, message: 'অর্ডারটি রিসেল তালিকায় গেছে। কেউ কিনলে রিফান্ড পাবেন।' };
 };
@@ -380,7 +380,7 @@ export const buyResellOrder = async (buyerId: string, orderId: string) => {
 
   // মূল ব্যবহারকারীকে refund দাও
   // (SSLCommerz refund বা wallet credit — পরে যোগ হবে)
-  io.emit(`user:refund:${order.originalUser}`, { orderId: order._id, amount: order.totalAmount });
+  emit(`user:refund:${order.originalUser}`, { orderId: order._id, amount: order.totalAmount });
   return order;
 };
 

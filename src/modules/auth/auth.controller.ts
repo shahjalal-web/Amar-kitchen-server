@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
-import { registerUser, loginUser, getProfile, updateLocation } from './auth.service';
+import {
+  registerUser, loginUser, getProfile, updateProfile,
+  listAddresses, addAddress, updateAddress, deleteAddress,
+} from './auth.service';
 import { sendSuccess, sendError } from '../../utils/response';
 import { AuthRequest } from '../../middleware/auth';
 
@@ -31,12 +34,36 @@ export const profile = async (req: AuthRequest, res: Response): Promise<void> =>
   }
 };
 
-export const updateProfileLocation = async (req: AuthRequest, res: Response): Promise<void> => {
+export const updateMyProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { lat, lng } = req.body;
-    const user = await updateLocation(req.user!.userId, lat, lng);
-    sendSuccess(res, user, 'লোকেশন আপডেট হয়েছে');
+    const user = await updateProfile(req.user!.userId, req.body);
+    sendSuccess(res, user, 'প্রোফাইল আপডেট হয়েছে');
   } catch (err: unknown) {
     sendError(res, (err as Error).message, 400);
   }
+};
+
+// ─── ঠিকানা বই ────────────────────────────────────────────
+export const getAddresses = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    sendSuccess(res, await listAddresses(req.user!.userId));
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};
+
+export const createAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    sendSuccess(res, await addAddress(req.user!.userId, req.body), 'ঠিকানা সেভ হয়েছে', 201);
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};
+
+export const editAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    sendSuccess(res, await updateAddress(req.user!.userId, String(req.params.id), req.body), 'ঠিকানা আপডেট হয়েছে');
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};
+
+export const removeAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    sendSuccess(res, await deleteAddress(req.user!.userId, String(req.params.id)), 'ঠিকানা মুছে ফেলা হয়েছে');
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
 };

@@ -6,6 +6,7 @@ import {
   getConfig, updateConfig,
   pendingApprovals, approveUserCtrl, rejectUserCtrl, setOrderLimit,
   financialSummary, listWithdrawals, approveWithdrawalCtrl, rejectWithdrawalCtrl,
+  dashboardStats, allOrders, cancelOrderCtrl, allUsers, userDetail, setUserActiveCtrl,
 } from './admin.controller';
 
 const router = Router();
@@ -37,5 +38,13 @@ router.get('/finance', ...adminOnly, financialSummary);
 router.get('/withdrawals', ...adminOnly, listWithdrawals);
 router.patch('/withdrawals/:id/approve', ...adminOnly, approveWithdrawalCtrl);
 router.patch('/withdrawals/:id/reject', ...adminOnly, rejectWithdrawalCtrl);
+
+// Insights & management
+router.get('/dashboard', ...adminOnly, dashboardStats);
+router.get('/orders', ...adminOnly, allOrders);
+router.patch('/orders/:id/cancel', ...adminOnly, cancelOrderCtrl);
+router.get('/users', ...adminOnly, allUsers);
+router.get('/users/:id', ...adminOnly, userDetail);
+router.patch('/users/:id/active', ...adminOnly, setUserActiveCtrl);
 
 export default router;

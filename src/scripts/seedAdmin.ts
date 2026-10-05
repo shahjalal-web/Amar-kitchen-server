@@ -4,12 +4,16 @@ import { initFirebase } from '../config/firebase';
 import { getAuth } from 'firebase-admin/auth';
 import { User } from '../modules/auth/auth.model';
 
-const ADMIN_EMAIL = 'shahjalal.profession@gmail.com';
-const ADMIN_PASSWORD = 'asdfasdf';
-const ADMIN_NAME = 'Shahjalal Admin';
-const ADMIN_PHONE = '01700000000';
+// ক্রেডেনশিয়াল .env থেকে — কোডে পাসওয়ার্ড রাখা যাবে না
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL as string;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD as string;
+const ADMIN_NAME = process.env.ADMIN_NAME || 'Shokher Kitchen Admin';
+const ADMIN_PHONE = process.env.ADMIN_PHONE || '01700000000';
 
 async function seedAdmin() {
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD || ADMIN_PASSWORD.length < 8) {
+    throw new Error('.env-এ ADMIN_EMAIL ও ADMIN_PASSWORD (ন্যূনতম ৮ অক্ষর) দিন');
+  }
   await connectDB();
   initFirebase();
 
@@ -17,7 +21,9 @@ async function seedAdmin() {
   try {
     const existing = await getAuth().getUserByEmail(ADMIN_EMAIL);
     firebaseUid = existing.uid;
-    console.log('Firebase user already exists:', firebaseUid);
+    // পাসওয়ার্ড .env-এর সাথে মিলিয়ে রাখো
+    await getAuth().updateUser(firebaseUid, { password: ADMIN_PASSWORD, emailVerified: true });
+    console.log('Firebase user already exists, password synced:', firebaseUid);
   } catch {
     const created = await getAuth().createUser({
       email: ADMIN_EMAIL,
@@ -51,7 +57,7 @@ async function seedAdmin() {
 
   console.log('\n✅ Admin account ready!');
   console.log('   Email   :', ADMIN_EMAIL);
-  console.log('   Password:', ADMIN_PASSWORD);
+  console.log('   Password: (.env-এর ADMIN_PASSWORD)');
   process.exit(0);
 }
 

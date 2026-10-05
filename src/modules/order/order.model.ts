@@ -11,6 +11,16 @@ export type OrderStatus =
   | 'resell'        // Accept-এর পর ক্যান্সেল → resell তালিকায়
   | 'resold';       // রিসেল হয়ে গেছে
 
+export type DeliveryMode = 'self' | 'delivery_boy';
+
+export interface IStatusEvent {
+  status: OrderStatus;
+  at: Date;
+  by?: mongoose.Types.ObjectId;
+  role: 'user' | 'kitchen' | 'delivery' | 'admin' | 'system';
+  note?: string;
+}
+
 export interface IOrderItem {
   foodItem: mongoose.Types.ObjectId;
   quantity: number;
@@ -26,14 +36,24 @@ export interface IOrder extends Document {
   status: OrderStatus;
   uniqueCode: string;
   buildingName: string;
-  deliveryAddress: string;
+  deliveryAddress: string;   // সম্পূর্ণ ঠিকানা (বিল্ডিং, বিস্তারিত, এরিয়া, থানা, শহর)
+  customerPhone?: string;
+  // লোকেশন snapshot — অর্ডারের সময়ের নাম (পরে admin নাম বদলালেও ইতিহাস ঠিক থাকে)
   area: string;
-  // delivery location/area (live location বা admin-area ভিত্তিক অর্ডারের জন্য)
-  deliveryLocation?: {
-    type: 'Point';
-    coordinates: [number, number]; // [lng, lat]
-  };
-  areaId?: mongoose.Types.ObjectId;
+  thana?: string;
+  city?: string;
+  zipCode?: string;
+  areaId?: mongoose.Types.ObjectId;  // ডেলিভারি বয় ম্যাচিং এর ভিত্তি
+  kitchenAreaId?: mongoose.Types.ObjectId;
+  // ডেলিভারি: কিচেন নিজে দেবে নাকি ডেলিভারি বয়
+  deliveryMode?: DeliveryMode;
+  statusHistory: IStatusEvent[];
+  // ডেলিভারি নিশ্চিতকরণ: পিকআপের সময় ৪ অঙ্কের কোড তৈরি হয়, শুধু গ্রাহক দেখেন (ইমেইল + অ্যাপ)।
+  // ডেলিভারিকারী কোড দিলে অথবা গ্রাহক নিজে "খাবার পেয়েছি" চাপলে তবেই delivered।
+  deliveryOtp?: string;
+  deliveryOtpSentAt?: Date;
+  deliveryOtpAttempts?: number;
+  deliveredConfirmedBy?: 'otp' | 'customer';
   // resell fields
   isResell: boolean;
   originalUser?: mongoose.Types.ObjectId;
@@ -70,11 +90,27 @@ const orderSchema = new Schema<IOrder>(
     uniqueCode: { type: String, required: true, unique: true },
     buildingName: { type: String, required: true },
     deliveryAddress: { type: String, required: true },
+    customerPhone: { type: String },
     area: { type: String, required: true },
-    deliveryLocation: {
-      type: { type: String, enum: ['Point'] },
-      coordinates: { type: [Number] },
-    },
+    thana: { type: String },
+    city: { type: String },
+    zipCode: { type: String },
+    kitchenAreaId: { type: Schema.Types.ObjectId, ref: 'Area' },
+    deliveryMode: { type: String, enum: ['self', 'delivery_boy'] },
+    deliveryOtp: { type: String, select: false },
+    deliveryOtpSentAt: { type: Date },
+    deliveryOtpAttempts: { type: Number, default: 0, select: false },
+    deliveredConfirmedBy: { type: String, enum: ['otp', 'customer'] },
+    statusHistory: [
+      {
+        _id: false,
+        status: { type: String, required: true },
+        at: { type: Date, default: Date.now },
+        by: { type: Schema.Types.ObjectId, ref: 'User' },
+        role: { type: String, required: true },
+        note: { type: String },
+      },
+    ],
     areaId: { type: Schema.Types.ObjectId, ref: 'Area' },
     isResell: { type: Boolean, default: false },
     originalUser: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -88,7 +124,8 @@ const orderSchema = new Schema<IOrder>(
   { timestamps: true }
 );
 
-orderSchema.index({ buildingName: 1, area: 1, status: 1 });
-orderSchema.index({ deliveryLocation: '2dsphere' }, { sparse: true });
+orderSchema.index({ buildingName: 1, areaId: 1, status: 1 });
+orderSchema.index({ areaId: 1, status: 1 });
+orderSchema.index({ deliveryBoy: 1, status: 1 });
 
 export const Order = mongoose.model<IOrder>('Order', orderSchema);

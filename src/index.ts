@@ -15,7 +15,7 @@ import kitchenRoutes from './modules/kitchen/kitchen.routes';
 import orderRoutes from './modules/order/order.routes';
 import deliveryRoutes from './modules/delivery/delivery.routes';
 import subscriptionRoutes from './modules/subscription/subscription.routes';
-import areaRoutes from './modules/area/area.routes';
+import locationRoutes from './modules/location/location.routes';
 
 import { startCronJobs } from './utils/cron';
 
@@ -35,7 +35,7 @@ app.use('/api/kitchen', kitchenRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/subscription', subscriptionRoutes);
-app.use('/api/areas', areaRoutes);
+app.use('/api/locations', locationRoutes);
 
 app.use(errorHandler);
 

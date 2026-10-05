@@ -6,7 +6,7 @@ import * as adminService from './admin.service';
 // ─── Food Library ─────────────────────────────────────────
 export const addFoodItem = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const item = await adminService.createFoodItem(req.body);
+    const item = await adminService.createFoodItem(req.user!.userId, req.body);
     sendSuccess(res, item, 'খাবার যোগ করা হয়েছে', 201);
   } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
 };
@@ -124,5 +124,46 @@ export const rejectWithdrawalCtrl = async (req: AuthRequest, res: Response): Pro
   try {
     const data = await adminService.rejectWithdrawal(String(req.params.id), req.body.note);
     sendSuccess(res, data, 'উইথড্র প্রত্যাখ্যান করা হয়েছে');
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};
+
+// ─── ইনসাইট ও ম্যানেজমেন্ট ────────────────────────────────
+export const dashboardStats = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try { sendSuccess(res, await adminService.getDashboardStats()); }
+  catch (err: unknown) { sendError(res, (err as Error).message); }
+};
+
+export const allOrders = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    sendSuccess(res, await adminService.listAllOrders({
+      status: q.status, city: q.city, q: q.q, from: q.from, to: q.to, page: Number(q.page), limit: Number(q.limit),
+    }));
+  } catch (err: unknown) { sendError(res, (err as Error).message); }
+};
+
+export const cancelOrderCtrl = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const order = await adminService.adminCancelOrder(req.user!.userId, String(req.params.id), req.body.reason);
+    sendSuccess(res, order, 'অর্ডার বাতিল করা হয়েছে');
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};
+
+export const allUsers = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    sendSuccess(res, await adminService.listUsers({ role: q.role, q: q.q, status: q.status, page: Number(q.page) }));
+  } catch (err: unknown) { sendError(res, (err as Error).message); }
+};
+
+export const userDetail = async (req: AuthRequest, res: Response): Promise<void> => {
+  try { sendSuccess(res, await adminService.getUserDetail(String(req.params.id))); }
+  catch (err: unknown) { sendError(res, (err as Error).message, 404); }
+};
+
+export const setUserActiveCtrl = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await adminService.setUserActive(String(req.params.id), !!req.body.isActive);
+    sendSuccess(res, user, user.isActive ? 'একাউন্ট চালু করা হয়েছে' : 'একাউন্ট ব্লক করা হয়েছে');
   } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
 };

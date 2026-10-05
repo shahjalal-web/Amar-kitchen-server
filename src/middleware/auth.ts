@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { sendError } from '../utils/response';
+import { User } from '../modules/auth/auth.model';
 
 export interface AuthPayload {
   userId: string;
@@ -38,3 +39,26 @@ export const authorize = (...roles: AuthPayload['role'][]) =>
     }
     next();
   };
+
+// kitchen/delivery একাউন্ট admin approve না করা পর্যন্ত কাজ করতে পারবে না
+// (JWT শুধু role বহন করে, তাই isApproved/isActive প্রতি রিকোয়েস্টে DB থেকে দেখা হয়)
+export const requireApproved = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const user = await User.findById(req.user?.userId).select('isApproved isActive');
+    if (!user || !user.isActive) {
+      sendError(res, 'আপনার একাউন্ট বন্ধ করা হয়েছে', 403);
+      return;
+    }
+    if (!user.isApproved) {
+      sendError(res, 'অ্যাডমিন এখনো আপনার একাউন্ট অ্যাপ্রুভ করেনি', 403);
+      return;
+    }
+    next();
+  } catch {
+    sendError(res, 'অনুমতি যাচাই করা যায়নি', 500);
+  }
+};

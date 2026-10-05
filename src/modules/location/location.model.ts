@@ -97,3 +97,23 @@ areaSchema.pre('save', setSlug);
 areaSchema.index({ location: '2dsphere' }, { sparse: true });
 
 export const Area = mongoose.model<IArea>('Area', areaSchema);
+
+// ─── রাস্তার দূরত্বের ক্যাশ ─────────────────────────────────
+// দুটো নির্দিষ্ট বিন্দুর (এরিয়ার কেন্দ্র বা ম্যাপের পিন) রাস্তার দূরত্ব একবার মেপে রাখা হয়;
+// পরের বার একই জোড়ার জন্য রাউটিং API আর ডাকা হয় না। key = দুই বিন্দু (৫ দশমিক পর্যন্ত, ছোটটা আগে)।
+export interface IRouteDistance extends Document {
+  key: string;
+  km: number;
+  provider: string;
+}
+
+const routeDistanceSchema = new Schema<IRouteDistance>(
+  {
+    key: { type: String, required: true, unique: true },
+    km: { type: Number, required: true },
+    provider: { type: String, default: 'openrouteservice' },
+  },
+  { timestamps: true }
+);
+
+export const RouteDistance = mongoose.model<IRouteDistance>('RouteDistance', routeDistanceSchema);

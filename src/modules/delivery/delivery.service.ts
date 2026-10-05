@@ -11,6 +11,8 @@ const ORDER_POPULATE = [
   { path: 'user', select: 'name phone' },
   { path: 'items.foodItem', select: 'name' },
 ];
+// নিজের অ্যাসাইন করা ডেলিভারিতে পিকআপের জন্য কিচেনের ম্যাপ পিনও (খোলা পিকআপ তালিকায় নয়)
+const MY_ORDER_POPULATE = [{ ...ORDER_POPULATE[0], select: `${ORDER_POPULATE[0].select} +kitchenLocation` }, ...ORDER_POPULATE.slice(1)];
 
 // ─── ডেলিভারি বয়ের সিলেক্ট করা এরিয়া সেট করো ────────────
 export const setDeliveryAreas = async (deliveryBoyId: string, areaIds: string[]) => {
@@ -77,7 +79,7 @@ export const claimOrder = async (deliveryBoyId: string, orderId: string) => {
 // ─── আমার নির্ধারিত ডেলিভারি (শেষ হয়নি এমন) ───────────────
 export const getMyActiveDeliveries = async (deliveryBoyId: string) =>
   Order.find({ deliveryBoy: deliveryBoyId, status: { $in: ['accepted', 'ready', 'picked_up'] } })
-    .populate(ORDER_POPULATE)
+    .populate(MY_ORDER_POPULATE)
     .sort({ updatedAt: -1 });
 
 // ─── কোড স্ক্যান: ready → picked_up → delivered ──────────

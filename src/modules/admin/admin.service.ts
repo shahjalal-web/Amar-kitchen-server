@@ -6,38 +6,87 @@ import { notifyAccountReview, notifyWithdrawalReview, notifyOrderStatus } from '
 import { pushStatus } from '../order/order.service';
 import { Area } from '../location/location.model';
 import { AREA_POPULATE } from '../location/location.service';
+import { DailyMenu } from '../kitchen/kitchen.model';
+import { Subscription } from '../subscription/subscription.model';
+import { normalizeImages, destroyUnusedImages } from '../../utils/images';
 
 type FoodCategory = IFoodItem['category'];
 
 // ─── Food Library ─────────────────────────────────────────
+type FoodDoc = InstanceType<typeof FoodItem>;
+
+// নতুন ছবির তালিকা বসায়; যে ছবিগুলো বাদ পড়ল সেগুলোর publicId ফেরত দেয় (সেভের পর মুছতে)
+export const setFoodImages = (food: FoodDoc, input: unknown): string[] => {
+  const next = normalizeImages(input);
+  if (!next.length) throw new Error('অন্তত একটি ছবি দিন');
+  // আগের ছবির credit হারিয়ে না যায় (ক্লায়েন্ট শুধু URL পাঠালেও)
+  const oldById = new Map((food.images ?? []).map((i) => [i.publicId, i]));
+  food.images = next.map((i) => ({ ...i, credit: i.credit ?? oldById.get(i.publicId)?.credit })) as FoodDoc['images'];
+  const keep = new Set(next.map((i) => i.publicId));
+  return [...oldById.keys()].filter((id) => !keep.has(id));
+};
+
+// স্থায়ীভাবে মুছে ফেলা + Cloudinary থেকে ছবি মুছে ফেলা।
+// আগের অর্ডার/প্যাকেজ/সাবস্ক্রিপশনে থাকলে মোছা যাবে না (ইতিহাস ভেঙে যাবে) — তখন বন্ধ করে রাখতে হবে।
+export const deleteFoodPermanently = async (food: FoodDoc) => {
+  const used = await Promise.all([
+    Order.exists({ 'items.foodItem': food._id }),
+    Package.exists({ 'items.foodItem': food._id }),
+    Subscription.exists({ 'customItems.foodItem': food._id }),
+  ]);
+  if (used.some(Boolean)) {
+    throw new Error('এই খাবার আগের অর্ডার/প্যাকেজে আছে, তাই মোছা যাবে না — "বন্ধ করুন" দিয়ে লুকিয়ে রাখুন');
+  }
+  await DailyMenu.updateMany({}, { $pull: { items: { foodItem: food._id }, freeItems: food._id } });
+  const publicIds = (food.images ?? []).map((i) => i.publicId);
+  await food.deleteOne();
+  const deleted = await destroyUnusedImages(publicIds);
+  return { deletedImages: deleted.length };
+};
+
 export const createFoodItem = async (adminId: string, data: {
-  name: string;
-  image: string;
-  category: FoodCategory;
-  imageCredit?: string;
+  name?: string;
+  images?: unknown;
+  category?: FoodCategory;
 }) => {
   const name = data.name?.trim();
   if (!name) throw new Error('খাবারের নাম দিন');
+  if (!data.category) throw new Error('ক্যাটাগরি নির্বাচন করুন');
   if (await FoodItem.exists({ name, kitchen: null })) throw new Error('এই নামে খাবার লাইব্রেরিতে আগেই আছে');
-  return FoodItem.create({ ...data, name, source: 'admin', createdBy: adminId });
+  const food = new FoodItem({ name, category: data.category, source: 'admin', createdBy: adminId });
+  setFoodImages(food, data.images);
+  return food.save();
 };
 
 // অ্যাডমিনের লাইব্রেরি আগে, তারপর কিচেনগুলোর নিজের খাবার
 export const getAllFoodItems = () =>
   FoodItem.find().populate('kitchen', 'name kitchenName').sort({ source: 1, category: 1, name: 1 });
 
-export const updateFoodItem = (
+export const updateFoodItem = async (
   id: string,
-  data: Partial<{ name: string; image: string; imageCredit: string; category: FoodCategory; isActive: boolean }>
+  data: Partial<{ name: string; images: unknown; category: FoodCategory; isActive: boolean }>
 ) => {
-  // শুধু এই ফিল্ডগুলো বদলানো যায় (source/kitchen নয়); না পাঠানো ফিল্ড অপরিবর্তিত থাকে
-  const allowed = ['name', 'image', 'imageCredit', 'category', 'isActive'] as const;
-  const update = Object.fromEntries(allowed.filter((k) => data[k] !== undefined).map((k) => [k, data[k]]));
-  return FoodItem.findByIdAndUpdate(id, update, { new: true });
+  const food = await FoodItem.findById(id);
+  if (!food) throw new Error('খাবার পাওয়া যায়নি');
+  if (data.name !== undefined) {
+    const name = data.name.trim();
+    if (!name) throw new Error('খাবারের নাম দিন');
+    if (await FoodItem.exists({ _id: { $ne: food._id }, name, kitchen: food.kitchen ?? null })) throw new Error('এই নামে খাবার আগেই আছে');
+    food.name = name;
+  }
+  if (data.category !== undefined) food.category = data.category;
+  if (data.isActive !== undefined) food.isActive = data.isActive;
+  const removed = data.images !== undefined ? setFoodImages(food, data.images) : [];
+  await food.save();
+  await destroyUnusedImages(removed);
+  return food;
 };
 
-export const deleteFoodItem = (id: string) =>
-  FoodItem.findByIdAndUpdate(id, { isActive: false }, { new: true });
+export const deleteFoodItem = async (id: string) => {
+  const food = await FoodItem.findById(id);
+  if (!food) throw new Error('খাবার পাওয়া যায়নি');
+  return deleteFoodPermanently(food);
+};
 
 // ─── Package Management ───────────────────────────────────
 export const createPackage = (data: {
@@ -60,12 +109,22 @@ export const getGlobalConfig = async () => {
   return config;
 };
 
-export const updateGlobalConfig = (adminId: string, data: object) =>
-  GlobalConfig.findOneAndUpdate(
-    {},
-    { ...data, updatedBy: adminId },
-    { upsert: true, new: true }
-  );
+export const updateGlobalConfig = (adminId: string, data: Record<string, unknown>) => {
+  const { _id, createdAt, updatedAt, __v, ...rest } = data; // eslint-disable-line @typescript-eslint/no-unused-vars
+  // ডেলিভারির ধাপ: দূরত্ব বাড়লে চার্জ কমতে পারবে না, একই দূরত্ব দুবার নয়
+  if (rest.deliverySlabs !== undefined) {
+    if (!Array.isArray(rest.deliverySlabs) || rest.deliverySlabs.length === 0) throw new Error('অন্তত একটি ডেলিভারি ধাপ দিন');
+    const slabs = rest.deliverySlabs
+      .map((x: { upToKm?: unknown; fee?: unknown }) => ({ upToKm: Number(x?.upToKm), fee: Number(x?.fee) }))
+      .sort((a, b) => a.upToKm - b.upToKm);
+    slabs.forEach((x, i) => {
+      if (!(x.upToKm > 0) || !(x.fee >= 0)) throw new Error('ডেলিভারি ধাপের দূরত্ব ও চার্জ সঠিক দিন');
+      if (i > 0 && (x.upToKm === slabs[i - 1].upToKm || x.fee < slabs[i - 1].fee)) throw new Error('দূরত্ব বাড়লে চার্জ কমতে পারবে না, আর একই দূরত্ব দুবার দেওয়া যাবে না');
+    });
+    rest.deliverySlabs = slabs;
+  }
+  return GlobalConfig.findOneAndUpdate({}, { ...rest, updatedBy: adminId }, { upsert: true, new: true, runValidators: true });
+};
 
 // ─── Approvals ────────────────────────────────────────────
 export const getPendingApprovals = (status?: string) => {
@@ -114,7 +173,9 @@ export const getFinancialSummary = async () => {
   const totalRevenue = revenueAgg?.totalRevenue ?? 0;
   const totalDeliveryCharge = revenueAgg?.totalDeliveryCharge ?? 0;
   const deliveredOrders = revenueAgg?.deliveredOrders ?? 0;
+  const deliveryCommissionRate = config.deliveryCommissionRate ?? 8;
   const commissionEarned = Math.round((totalRevenue * commissionRate) / 100);
+  const deliveryCommissionEarned = Math.round((totalDeliveryCharge * deliveryCommissionRate) / 100);
 
   const [walletAgg] = await User.aggregate([
     { $match: { role: 'kitchen' } },
@@ -137,6 +198,8 @@ export const getFinancialSummary = async () => {
     deliveredOrders,
     commissionRate,
     commissionEarned,
+    deliveryCommissionRate,
+    deliveryCommissionEarned,
     totalKitchenWalletBalance: walletAgg?.totalWalletBalance ?? 0,
     pendingWithdrawals: { count: pendingWithdrawAgg?.count ?? 0, amount: pendingWithdrawAgg?.total ?? 0 },
     totalPaidOut: paidWithdrawAgg?.total ?? 0,
@@ -385,7 +448,7 @@ export const listUsers = async (f: { role?: string; q?: string; status?: string;
 
 export const getUserDetail = async (userId: string) => {
   const user = await User.findById(userId)
-    .select('-firebaseUid')
+    .select('-firebaseUid +kitchenLocation') // অ্যাডমিন কিচেনের আসল লোকেশন দেখতে পারেন
     .populate({ path: 'addresses.areaId', populate: AREA_POPULATE })
     .populate({ path: 'deliveryAreaIds', select: 'name zipCode' });
   if (!user) throw new Error('ইউজার পাওয়া যায়নি');

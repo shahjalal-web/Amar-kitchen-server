@@ -5,10 +5,17 @@ import mongoose, { Document, Schema } from 'mongoose';
 //         'kitchen' = কোনো কিচেন মালিকের নিজের তৈরি খাবার (শুধু সেই কিচেনের মেনুতে)
 export type FoodSource = 'admin' | 'kitchen';
 
+export interface IFoodImage {
+  url: string;          // Cloudinary URL
+  publicId: string;     // Cloudinary public_id — ছবি বদলালে/খাবার মুছলে পুরনো ছবি মুছতে লাগে
+  credit?: string;      // ছবির উৎস/লাইসেন্স (যেমন Wikimedia Commons, CC BY-SA)
+}
+
 export interface IFoodItem extends Document {
   name: string;
-  image: string;        // Cloudinary URL
-  imageCredit?: string; // ছবির উৎস/লাইসেন্স (যেমন Wikimedia Commons, CC BY-SA)
+  images: IFoodImage[]; // প্রথমটা প্রধান ছবি
+  image: string;        // images[0].url — পুরনো কোড/পপুলেটের জন্য রাখা
+  imageCredit?: string; // images[0].credit
   category: 'ভাত' | 'রুটি' | 'মাছ' | 'মাংস' | 'সবজি' | 'ডাল' | 'সালাদ' | 'পানীয়' | 'অন্যান্য';
   source: FoodSource;
   kitchen?: mongoose.Types.ObjectId;   // source === 'kitchen' হলে মালিক
@@ -19,6 +26,10 @@ export interface IFoodItem extends Document {
 const foodItemSchema = new Schema<IFoodItem>(
   {
     name: { type: String, required: true, trim: true },
+    images: {
+      type: [{ _id: false, url: { type: String, required: true }, publicId: { type: String, required: true }, credit: { type: String, trim: true } }],
+      default: [],
+    },
     image: { type: String, required: true },
     imageCredit: { type: String, trim: true },
     source: { type: String, enum: ['admin', 'kitchen'], default: 'admin', index: true },
@@ -36,6 +47,15 @@ const foodItemSchema = new Schema<IFoodItem>(
 
 // নাম ইউনিক: অ্যাডমিন লাইব্রেরির মধ্যে, এবং প্রতিটি কিচেনের নিজের খাবারের মধ্যে আলাদাভাবে
 foodItemSchema.index({ name: 1, kitchen: 1 }, { unique: true });
+foodItemSchema.index({ 'images.publicId': 1 });
+
+// প্রধান ছবি সবসময় images[0] থেকে
+foodItemSchema.pre('validate', function () {
+  if (this.images?.length) {
+    this.image = this.images[0].url;
+    this.imageCredit = this.images[0].credit;
+  }
+});
 
 export const FoodItem = mongoose.model<IFoodItem>('FoodItem', foodItemSchema);
 
@@ -76,9 +96,12 @@ export const Package = mongoose.model<IPackage>('Package', packageSchema);
 // ==================== Global Config ====================
 export interface IGlobalConfig extends Document {
   defaultOrderLimit: number;
-  deliveryBaseFee: number;                 // অন্য থানার ডেলিভারি চার্জ
-  sameAreaDeliveryFee: number;             // কিচেন ও গ্রাহক একই এরিয়ায়
-  sameThanaDeliveryFee: number;            // একই থানার অন্য এরিয়ায়
+  deliveryBaseFee: number;                 // এরিয়ার লোকেশন না থাকলে: অন্য থানার চার্জ
+  sameAreaDeliveryFee: number;             // কিচেন ও গ্রাহক একই এরিয়ায় (অন্য এরিয়ায় এর সাথে কিমি-চার্জ যোগ হয়)
+  sameThanaDeliveryFee: number;            // এরিয়ার লোকেশন না থাকলে: একই থানার চার্জ
+  deliverySlabs: { upToKm: number; fee: number }[]; // নিজের এরিয়ার বাইরে: রাস্তার দূরত্বের ধাপে চার্জ; শেষ ধাপ = সর্বোচ্চ দূরত্ব
+  deliveryCommissionRate: number;          // ডেলিভারি চার্জ থেকে কমিশন % (ডেলিভারি বয় বা কিচেন — যে-ই দিক, একই)
+  roadDistanceFactor: number;              // রাস্তার দূরত্ব জানা না গেলে: সোজা দূরত্ব × এই গুণক
   nearbyRadiusKm: number;                  // "আশেপাশের টপ কিচেন" খোঁজার পরিধি
   deliveryDiscountPercentPerOrder: number; // প্রতি অতিরিক্ত অর্ডারে কত % ছাড়
   maxDeliveryDiscount: number;             // সর্বোচ্চ ছাড়ের সীমা (%)
@@ -92,6 +115,12 @@ const globalConfigSchema = new Schema<IGlobalConfig>(
     deliveryBaseFee: { type: Number, default: 50 },
     sameAreaDeliveryFee: { type: Number, default: 20 },
     sameThanaDeliveryFee: { type: Number, default: 35 },
+    deliverySlabs: {
+      type: [{ _id: false, upToKm: { type: Number, required: true, min: 0.1 }, fee: { type: Number, required: true, min: 0 } }],
+      default: () => [{ upToKm: 2, fee: 25 }, { upToKm: 3.5, fee: 30 }, { upToKm: 5, fee: 40 }],
+    },
+    deliveryCommissionRate: { type: Number, default: 8, min: 0, max: 100 },
+    roadDistanceFactor: { type: Number, default: 1.4, min: 1, max: 3 },
     nearbyRadiusKm: { type: Number, default: 3 },
     deliveryDiscountPercentPerOrder: { type: Number, default: 10 },
     maxDeliveryDiscount: { type: Number, default: 70 },

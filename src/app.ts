@@ -14,6 +14,8 @@ import orderRoutes from './modules/order/order.routes';
 import deliveryRoutes from './modules/delivery/delivery.routes';
 import subscriptionRoutes from './modules/subscription/subscription.routes';
 import locationRoutes from './modules/location/location.routes';
+import staffRoutes from './modules/staff/staff.routes';
+import mediaRoutes from './modules/media/media.routes';
 
 import { processCancelledSubscriptions } from './modules/subscription/subscription.service';
 
@@ -48,6 +50,8 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/locations', locationRoutes);
+app.use('/api/staff', staffRoutes);
+app.use('/api/media', mediaRoutes);
 
 // Vercel Cron (vercel.json) প্রতিদিন এটা ডাকে — লোকালে node-cron একই কাজ করে
 app.get('/api/cron/subscriptions', async (req, res, next) => {

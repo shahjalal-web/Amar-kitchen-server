@@ -1,19 +1,20 @@
 import { Router } from 'express';
-import { authenticate, authorize } from '../../middleware/auth';
+import { authenticate, authorize, requirePermission } from '../../middleware/auth';
 import {
-  listCities, listThanas, listAreas, areaDetail, search, nearbyAreas,
+  listCities, listThanas, listAreas, areaDetail, search, nearbyAreas, nearestArea,
   adminCities, adminThanas, adminAreas,
   createCity, updateCity, createThana, updateThana, createArea, updateArea,
 } from './location.controller';
 
 const router = Router();
-const adminOnly = [authenticate, authorize('admin')];
+const adminOnly = [authenticate, authorize('admin'), requirePermission('locations.manage')];
 
 // পাবলিক — লগইনের আগেই (রেজিস্ট্রেশন) দরকার
 router.get('/cities', listCities);
 router.get('/thanas', listThanas);            // ?cityId=
 router.get('/areas', listAreas);              // ?thanaId=
 router.get('/areas/search', search);          // ?q= জিপ কোড বা নাম
+router.get('/areas/nearest', nearestArea);     // ?lat=&lng= — ম্যাপের পিনের সবচেয়ে কাছের এরিয়া
 router.get('/areas/:id', areaDetail);
 router.get('/areas/:id/nearby', nearbyAreas); // ?radiusKm=
 

@@ -3,6 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { User, IUser, UserRole } from './auth.model';
 import { Area } from '../location/location.model';
 import { getActiveAreaOrThrow, AREA_POPULATE } from '../location/location.service';
+import { parsePoint } from '../../utils/geo';
 
 export interface RegisterDTO {
   firebaseToken: string;
@@ -98,11 +99,12 @@ export const loginUser = async (firebaseToken: string) => {
   if (!user) throw new Error('ব্যবহারকারী পাওয়া যায়নি। প্রথমে রেজিস্ট্রেশন করুন।');
   if (!user.isActive) throw new Error('আপনার একাউন্ট বন্ধ করা হয়েছে।');
 
+  await user.populate('staffRole', 'name permissions isActive');
   return { user, token: signJwt(user) };
 };
 
 export const getProfile = (userId: string) =>
-  User.findById(userId).select('-firebaseUid');
+  User.findById(userId).select('-firebaseUid +kitchenLocation').populate('staffRole', 'name permissions isActive');
 
 export interface UpdateProfileDTO {
   name?: string;
@@ -112,6 +114,7 @@ export interface UpdateProfileDTO {
   kitchenName?: string;
   kitchenDescription?: string;
   deliveryAreaIds?: string[];
+  kitchenLocation?: { lat: number; lng: number } | null; // কিচেনের ম্যাপ পিন (null = মুছে ফেলা)
 }
 
 // নিজের প্রোফাইল আপডেট — রোল/অ্যাপ্রুভাল/ওয়ালেট এখান থেকে বদলানো যাবে না।
@@ -133,13 +136,16 @@ export const updateProfile = async (userId: string, dto: UpdateProfileDTO) => {
     if (dto.kitchenName?.trim()) update.kitchenName = dto.kitchenName.trim();
     if (dto.kitchenDescription !== undefined) update.kitchenDescription = dto.kitchenDescription.trim();
     if (dto.buildingAddress !== undefined) update.buildingAddress = dto.buildingAddress.trim();
+    const pin = parsePoint(dto.kitchenLocation);
+    if (pin) update.kitchenLocation = pin;
+    if (pin === null) update.$unset = { kitchenLocation: 1 };
   }
 
   if (user.role === 'delivery' && dto.deliveryAreaIds !== undefined) {
     update.deliveryAreaIds = await validDeliveryAreaIds(dto.deliveryAreaIds);
   }
 
-  return User.findByIdAndUpdate(userId, update, { new: true }).select('-firebaseUid');
+  return User.findByIdAndUpdate(userId, update, { new: true }).select('-firebaseUid +kitchenLocation');
 };
 
 // ─── ঠিকানা বই (শুধু user রোল) ───────────────────────────
@@ -150,6 +156,7 @@ export interface AddressDTO {
   addressLine?: string;
   phone?: string;
   isDefault?: boolean;
+  location?: { lat: number; lng: number } | null; // ম্যাপ পিন (null = মুছে ফেলা)
 }
 
 const populateAddresses = (userId: string) =>
@@ -190,6 +197,7 @@ export const addAddress = async (userId: string, dto: AddressDTO) => {
     addressLine: dto.addressLine.trim(),
     phone: dto.phone?.trim() || user.phone,
     isDefault: false,
+    location: parsePoint(dto.location) ?? undefined,
   });
   const created = user.addresses[user.addresses.length - 1];
   await syncDefault(user, dto.isDefault || user.addresses.length === 1 ? String(created._id) : undefined);
@@ -213,6 +221,8 @@ export const updateAddress = async (userId: string, addressId: string, dto: Addr
     address.addressLine = dto.addressLine.trim();
   }
   if (dto.phone !== undefined) address.phone = dto.phone.trim();
+  const pin = parsePoint(dto.location);
+  if (pin !== undefined) address.location = pin ?? undefined;
 
   await syncDefault(user, dto.isDefault ? addressId : undefined);
   await user.save();

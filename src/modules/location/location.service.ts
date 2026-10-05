@@ -201,3 +201,30 @@ export const updateArea = async (id: string, data: AreaInput) => {
   await User.updateMany({ areaId: area._id }, { area: area.name });
   return area;
 };
+
+// ম্যাপের একটা বিন্দুর কাছের সক্রিয় এরিয়াগুলো (কেন্দ্র maxKm-এর মধ্যে, কাছেরটা আগে)।
+// এরিয়ার কেন্দ্র আনুমানিক, তাই ফ্রন্টএন্ড candidates দেখে ঠিক করে আগের বাছাই রাখবে নাকি বদলাবে।
+export const findNearestArea = async (lng: number, lat: number, maxKm = 4) => {
+  const hits = await Area.aggregate([
+    {
+      $geoNear: {
+        near: { type: 'Point', coordinates: [lng, lat] },
+        distanceField: 'distanceMeters',
+        maxDistance: maxKm * 1000,
+        query: { isActive: true },
+        spherical: true,
+      },
+    },
+    { $limit: 5 },
+    { $project: { _id: 1, name: 1, distanceMeters: 1 } },
+  ]);
+  if (!hits.length) return null;
+  const area = await Area.findById(hits[0]._id).populate(AREA_POPULATE);
+  if (!area) return null;
+  const km = (m: number) => Math.round((m / 1000) * 100) / 100;
+  return {
+    area,
+    distanceKm: km(hits[0].distanceMeters),
+    candidates: hits.map((h) => ({ _id: String(h._id), name: h.name as string, distanceKm: km(h.distanceMeters) })),
+  };
+};

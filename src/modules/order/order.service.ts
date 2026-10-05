@@ -6,7 +6,8 @@ import { getActiveAreaOrThrow } from '../location/location.service';
 import { DailyMenu } from '../kitchen/kitchen.model';
 import { DeliveryTask } from '../delivery/delivery.model';
 import { GlobalConfig } from '../admin/admin.model';
-import { calcDeliveryCharge } from '../kitchen/kitchen.service';
+import { quoteDelivery } from '../kitchen/kitchen.service';
+import { GeoPoint, hasPoint, parsePoint } from '../../utils/geo';
 import { notifyNewOrder, notifyOrderStatus, notifyDeliveryAssigned, notifyDeliveryOtp } from '../../utils/notify';
 import { emit } from '../../utils/realtime';
 
@@ -65,6 +66,7 @@ export interface PlaceOrderDTO {
     addressLine: string;
     phone?: string;
     label?: string;
+    location?: { lat: number; lng: number } | null; // ম্যাপের পিন (ঐচ্ছিক)
   };
   saveAddress?: boolean;           // নতুন ঠিকানাটা ঠিকানা বইয়ে সেভ করো
 }
@@ -74,13 +76,16 @@ export const placeOrder = async (userId: string, data: PlaceOrderDTO) => {
   if (!user) throw new Error('ব্যবহারকারী পাওয়া যায়নি');
 
   // ─ ঠিকানা
-  let addr: { areaId?: string; buildingName?: string; addressLine?: string; phone?: string };
+  let addr: { areaId?: string; buildingName?: string; addressLine?: string; phone?: string; location?: GeoPoint | null };
   if (data.addressId) {
     const saved = user.addresses.id(data.addressId);
     if (!saved) throw new Error('সেভ করা ঠিকানা পাওয়া যায়নি');
-    addr = { areaId: saved.areaId.toString(), buildingName: saved.buildingName, addressLine: saved.addressLine, phone: saved.phone };
+    addr = {
+      areaId: saved.areaId.toString(), buildingName: saved.buildingName, addressLine: saved.addressLine, phone: saved.phone,
+      location: hasPoint(saved.location) ? (saved.location as GeoPoint) : null,
+    };
   } else if (data.address) {
-    addr = data.address;
+    addr = { ...data.address, location: parsePoint(data.address.location ?? null) ?? null };
   } else {
     throw new Error('ডেলিভারি ঠিকানা দিন');
   }
@@ -90,7 +95,7 @@ export const placeOrder = async (userId: string, data: PlaceOrderDTO) => {
   const area = await getActiveAreaOrThrow(addr.areaId);
 
   // ─ কিচেন ও মেনু
-  const kitchen = await User.findOne({ _id: data.kitchenId, role: 'kitchen', isApproved: true, isActive: true });
+  const kitchen = await User.findOne({ _id: data.kitchenId, role: 'kitchen', isApproved: true, isActive: true }).select('+kitchenLocation');
   if (!kitchen) throw new Error('কিচেন পাওয়া যায়নি');
 
   // দাম ক্লায়েন্ট থেকে নয় — কিচেনের আজকের মেনু থেকে নেওয়া হয়
@@ -125,7 +130,15 @@ export const placeOrder = async (userId: string, data: PlaceOrderDTO) => {
     status: { $in: ACTIVE_STATUSES },
     createdAt: { $gte: startOfToday() },
   });
-  const deliveryCharge = await calcDeliveryCharge(kitchen.areaId?.toString(), area.id, activeCount + 1);
+  const quote = await quoteDelivery(
+    { areaId: kitchen.areaId?.toString(), location: kitchen.kitchenLocation },
+    { areaId: area.id, location: addr.location },
+    activeCount + 1
+  );
+  if (!quote.allowed) {
+    throw new Error(`এই কিচেন আপনার ঠিকানা থেকে প্রায় ${quote.distanceKm} কিমি দূরে — সর্বোচ্চ ${quote.maxKm} কিমির মধ্যে অর্ডার করা যায়`);
+  }
+  const deliveryCharge = quote.charge;
 
   const order = new Order({
     user: userId,
@@ -143,6 +156,9 @@ export const placeOrder = async (userId: string, data: PlaceOrderDTO) => {
     zipCode: area.zipCode,
     areaId: area._id,
     kitchenAreaId: kitchen.areaId,
+    deliveryLocation: addr.location ?? undefined,
+    distanceKm: quote.distanceKm ?? undefined,
+    distanceSource: quote.distanceSource ?? undefined,
     paymentMethod: data.paymentMethod === 'sslcommerz' ? 'sslcommerz' : 'cash',
     statusHistory: [],
   });
@@ -158,6 +174,7 @@ export const placeOrder = async (userId: string, data: PlaceOrderDTO) => {
       addressLine,
       phone: addr.phone?.trim() || user.phone,
       isDefault: user.addresses.length === 0,
+      location: addr.location ?? undefined,
     });
     if (user.addresses.length === 1) { user.areaId = area._id as mongoose.Types.ObjectId; user.area = area.name; }
     await user.save();
@@ -197,9 +214,26 @@ const issueDeliveryOtp = async (orderId: unknown) => {
   if (order) notifyDeliveryOtp(order, otp).catch(console.error);
 };
 
+// ডেলিভারি চার্জ থেকে কমিশন — ডেলিভারি বয় বা কিচেন যে-ই দিক, সবসময় একই হার
 const deliveryEarning = async (deliveryCharge: number) => {
   const config = await GlobalConfig.findOne();
-  return Math.round((deliveryCharge * (100 - (config?.commissionRate ?? 10))) / 100);
+  return Math.round((deliveryCharge * (100 - (config?.deliveryCommissionRate ?? 8))) / 100);
+};
+
+// ডেলিভার্ড হলে টাকার ভাগ হিসাব করে অর্ডারে রেখে দেওয়া (পরে কমিশন রেট বদলালেও পুরনো হিসাব বদলায় না)
+export const computeSettlement = async (order: { totalAmount: number; deliveryCharge: number; deliveryMode?: string }) => {
+  const config = await GlobalConfig.findOne();
+  const foodCommission = Math.round((order.totalAmount * (config?.commissionRate ?? 10)) / 100);
+  const deliveryCommission = Math.round((order.deliveryCharge * (config?.deliveryCommissionRate ?? 8)) / 100);
+  const delivererEarning = order.deliveryCharge - deliveryCommission;
+  const selfDelivery = order.deliveryMode === 'self';
+  return {
+    foodCommission,
+    deliveryCommission,
+    kitchenEarning: order.totalAmount - foodCommission + (selfDelivery ? delivererEarning : 0),
+    delivererEarning: selfDelivery ? 0 : delivererEarning,
+    platformEarning: foodCommission + deliveryCommission,
+  };
 };
 
 export const transitionOrder = async (
@@ -240,6 +274,7 @@ export const transitionOrder = async (
     }
     order.deliveryOtp = undefined;
     order.deliveredConfirmedBy = 'otp';
+    order.settlement = await computeSettlement(order);
   }
 
   pushStatus(order, next, actor.role, actor.userId, next === 'delivered' ? note ?? 'গ্রাহকের ডেলিভারি কোড দিয়ে নিশ্চিত' : note);
@@ -271,6 +306,7 @@ export const confirmDeliveryByCustomer = async (userId: string, orderId: string)
   if (order.status !== 'picked_up') throw new Error('অর্ডারটি এখনো ডেলিভারির পথে নয়');
   order.deliveryOtp = undefined;
   order.deliveredConfirmedBy = 'customer';
+  order.settlement = await computeSettlement(order);
   pushStatus(order, 'delivered', 'user', userId, 'গ্রাহক নিজে খাবার পাওয়া নিশ্চিত করেছেন');
   await order.save();
   if (order.deliveryMode === 'delivery_boy' && order.deliveryBoy) {

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { sendSuccess, sendError } from '../../utils/response';
 import * as locationService from './location.service';
+import { parsePoint } from '../../utils/geo';
 
 // প্রতিটি হ্যান্ডলার একই try/catch → sendSuccess/sendError প্যাটার্ন
 const handle = (fn: (req: Request) => Promise<unknown>, okMessage?: string, okStatus = 200) =>
@@ -30,3 +31,12 @@ export const createThana = handle((req) => locationService.createThana(req.body)
 export const updateThana = handle((req) => locationService.updateThana(String(req.params.id), req.body), 'থানা আপডেট হয়েছে');
 export const createArea = handle((req) => locationService.createArea(req.body), 'এরিয়া যোগ হয়েছে', 201);
 export const updateArea = handle((req) => locationService.updateArea(String(req.params.id), req.body), 'এরিয়া আপডেট হয়েছে');
+
+// পাবলিক: ?lat=&lng= → সবচেয়ে কাছের এরিয়া (না পেলে null)
+export const nearestArea = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const p = parsePoint({ lat: req.query.lat, lng: req.query.lng });
+    if (!p) { sendError(res, 'lat/lng দিন', 400); return; }
+    sendSuccess(res, await locationService.findNearestArea(p.coordinates[0], p.coordinates[1]));
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
+};

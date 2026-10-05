@@ -27,9 +27,9 @@ export const editFoodItem = async (req: AuthRequest, res: Response): Promise<voi
 
 export const removeFoodItem = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    await adminService.deleteFoodItem(String(req.params.id));
-    sendSuccess(res, null, 'মুছে ফেলা হয়েছে');
-  } catch (err: unknown) { sendError(res, (err as Error).message); }
+    const result = await adminService.deleteFoodItem(String(req.params.id));
+    sendSuccess(res, result, 'খাবার ও এর ছবি মুছে ফেলা হয়েছে');
+  } catch (err: unknown) { sendError(res, (err as Error).message, 400); }
 };
 
 // ─── Package Management ───────────────────────────────────

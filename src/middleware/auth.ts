@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { sendError } from '../utils/response';
 import { User } from '../modules/auth/auth.model';
+import { IStaffRole } from '../modules/staff/staff.model';
+import { Permission } from '../utils/permissions';
 
 export interface AuthPayload {
   userId: string;
@@ -55,6 +57,43 @@ export const requireApproved = async (
     }
     if (!user.isApproved) {
       sendError(res, 'অ্যাডমিন এখনো আপনার একাউন্ট অ্যাপ্রুভ করেনি', 403);
+      return;
+    }
+    next();
+  } catch {
+    sendError(res, 'অনুমতি যাচাই করা যায়নি', 500);
+  }
+};
+
+// ─── অ্যাডমিন প্যানেলের পারমিশন ───────────────────────────
+// staffRole নেই এমন admin = সুপার অ্যাডমিন (সব পারে)। স্টাফের ক্ষেত্রে রোলের যেকোনো একটি পারমিশন মিললেই চলবে।
+const loadAdmin = (userId?: string) =>
+  User.findById(userId).select('role isActive staffRole').populate<{ staffRole: IStaffRole | null }>('staffRole', 'permissions isActive');
+
+export const requirePermission = (...perms: Permission[]) =>
+  async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const user = await loadAdmin(req.user?.userId);
+      if (!user || user.role !== 'admin' || !user.isActive) {
+        sendError(res, 'এই কাজের অনুমতি নেই', 403);
+        return;
+      }
+      if (!user.staffRole) { next(); return; }
+      if (!user.staffRole.isActive || !perms.some((p) => user.staffRole!.permissions.includes(p))) {
+        sendError(res, 'আপনার রোলে এই কাজের অনুমতি নেই', 403);
+        return;
+      }
+      next();
+    } catch {
+      sendError(res, 'অনুমতি যাচাই করা যায়নি', 500);
+    }
+  };
+
+export const superAdminOnly = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const user = await loadAdmin(req.user?.userId);
+    if (!user || user.role !== 'admin' || !user.isActive || user.staffRole) {
+      sendError(res, 'শুধু সুপার অ্যাডমিন এটা করতে পারেন', 403);
       return;
     }
     next();

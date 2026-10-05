@@ -46,6 +46,14 @@ export interface IOrder extends Document {
   areaId?: mongoose.Types.ObjectId;  // ডেলিভারি বয় ম্যাচিং এর ভিত্তি
   kitchenAreaId?: mongoose.Types.ObjectId;
   // ডেলিভারি: কিচেন নিজে দেবে নাকি ডেলিভারি বয়
+  deliveryLocation?: { type: 'Point'; coordinates: [number, number] }; // গ্রাহকের পিন (থাকলে) — কিচেন/ডেলিভারি বয়ের ম্যাপ লিংক
+  distanceKm?: number;       // কিচেন → গ্রাহক রাস্তার দূরত্ব (অর্ডারের সময়)
+  distanceSource?: 'road' | 'estimate';
+  // ডেলিভার্ড হলে টাকার ভাগ (কমিশন কাটার পর)
+  settlement?: {
+    foodCommission: number; deliveryCommission: number;
+    kitchenEarning: number; delivererEarning: number; platformEarning: number;
+  };
   deliveryMode?: DeliveryMode;
   statusHistory: IStatusEvent[];
   // ডেলিভারি নিশ্চিতকরণ: পিকআপের সময় ৪ অঙ্কের কোড তৈরি হয়, শুধু গ্রাহক দেখেন (ইমেইল + অ্যাপ)।
@@ -97,6 +105,13 @@ const orderSchema = new Schema<IOrder>(
     zipCode: { type: String },
     kitchenAreaId: { type: Schema.Types.ObjectId, ref: 'Area' },
     deliveryMode: { type: String, enum: ['self', 'delivery_boy'] },
+    deliveryLocation: { type: { type: String, enum: ['Point'] }, coordinates: { type: [Number] } },
+    distanceKm: { type: Number },
+    distanceSource: { type: String, enum: ['road', 'estimate'] },
+    settlement: {
+      foodCommission: Number, deliveryCommission: Number,
+      kitchenEarning: Number, delivererEarning: Number, platformEarning: Number,
+    },
     deliveryOtp: { type: String, select: false },
     deliveryOtpSentAt: { type: Date },
     deliveryOtpAttempts: { type: Number, default: 0, select: false },

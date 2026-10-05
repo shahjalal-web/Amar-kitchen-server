@@ -7,6 +7,9 @@ import { Area } from '../location/location.model';
 import { findNearbyAreas, AREA_POPULATE } from '../location/location.service';
 import { Order } from '../order/order.model';
 import { transitionOrder } from '../order/order.service';
+import { setFoodImages, deleteFoodPermanently } from '../admin/admin.service';
+import { destroyUnusedImages } from '../../utils/images';
+import { LngLat, hasPoint, roadDistancesKm } from '../../utils/geo';
 
 const todayDate = () => new Date().toISOString().split('T')[0];
 
@@ -21,23 +24,29 @@ export const getActiveFoodItems = (kitchenId: string) =>
 export const getMyFoodItems = (kitchenId: string) =>
   FoodItem.find({ kitchen: kitchenId }).sort({ isActive: -1, name: 1 });
 
-export const createKitchenFood = async (kitchenId: string, data: { name?: string; category?: string; image?: string }) => {
+export const createKitchenFood = async (kitchenId: string, data: { name?: string; category?: string; images?: unknown }) => {
   const name = data.name?.trim();
   if (!name) throw new Error('খাবারের নাম দিন');
   if (!data.category || !FOOD_CATEGORIES.includes(data.category)) throw new Error('ক্যাটাগরি নির্বাচন করুন');
-  if (!data.image) throw new Error('খাবারের ছবি দিন');
   if (await FoodItem.exists({ name, kitchen: kitchenId })) throw new Error('এই নামে আপনার খাবার আগেই আছে');
-  return FoodItem.create({
-    name, category: data.category as IFoodItem['category'], image: data.image,
+  const food = new FoodItem({
+    name, category: data.category as IFoodItem['category'],
     source: 'kitchen', kitchen: kitchenId, createdBy: kitchenId,
   });
+  setFoodImages(food, data.images);
+  return food.save();
+};
+
+const findOwnFood = async (kitchenId: string, foodId: string) => {
+  const food = await FoodItem.findOne({ _id: foodId, kitchen: kitchenId });
+  if (!food) throw new Error('খাবার পাওয়া যায়নি (শুধু নিজের তৈরি খাবার সম্পাদনা করা যায়)');
+  return food;
 };
 
 export const updateKitchenFood = async (
-  kitchenId: string, foodId: string, data: { name?: string; category?: string; image?: string; isActive?: boolean }
+  kitchenId: string, foodId: string, data: { name?: string; category?: string; images?: unknown; isActive?: boolean }
 ) => {
-  const food = await FoodItem.findOne({ _id: foodId, kitchen: kitchenId });
-  if (!food) throw new Error('খাবার পাওয়া যায়নি (শুধু নিজের তৈরি খাবার সম্পাদনা করা যায়)');
+  const food = await findOwnFood(kitchenId, foodId);
   if (data.name !== undefined) {
     const name = data.name.trim();
     if (!name) throw new Error('খাবারের নাম দিন');
@@ -48,14 +57,19 @@ export const updateKitchenFood = async (
     if (!FOOD_CATEGORIES.includes(data.category)) throw new Error('ক্যাটাগরি সঠিক নয়');
     food.category = data.category as typeof food.category;
   }
-  if (data.image) food.image = data.image;
   if (data.isActive !== undefined) food.isActive = data.isActive;
-  return food.save();
+  const removed = data.images !== undefined ? setFoodImages(food, data.images) : [];
+  await food.save();
+  await destroyUnusedImages(removed);
+  return food;
 };
+
+export const deleteKitchenFood = async (kitchenId: string, foodId: string) =>
+  deleteFoodPermanently(await findOwnFood(kitchenId, foodId));
 
 // ─── ইউজারের খাবার সার্চ: নির্বাচিত ও আশেপাশের এলাকার আজকের মেনুতে ───
 // ফলাফলে অ্যাডমিন লাইব্রেরির খাবার আগে, তারপর কিচেন মালিকদের নিজের খাবার; একই উৎসের মধ্যে কিচেনের রেটিং অনুযায়ী
-export const searchFoodInArea = async (areaId: string, q: string) => {
+export const searchFoodInArea = async (areaId: string, q: string, radiusKm?: number) => {
   const query = q.trim();
   if (query.length < 1) return [];
   const rx = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
@@ -64,7 +78,9 @@ export const searchFoodInArea = async (areaId: string, q: string) => {
   if (foods.length === 0) return [];
 
   const config = await GlobalConfig.findOne();
-  const nearby = await findNearbyAreas(areaId, config?.nearbyRadiusKm ?? 3, 15);
+  const maxKm = deliverySettings(config).maxKm;
+  const radius = Math.min(Math.max(Number.isFinite(radiusKm) ? Number(radiusKm) : config?.nearbyRadiusKm ?? 3, 0), maxKm);
+  const nearby = radius > 0 ? await findNearbyAreas(areaId, radius, 300) : [];
   const distanceByArea = new Map<string, number>([[areaId, 0], ...nearby.map((a) => [String(a._id), a.distanceKm] as [string, number])]);
   const kitchens = await User.find({
     role: 'kitchen', isApproved: true, isActive: true, areaId: { $in: [...distanceByArea.keys()] },
@@ -85,11 +101,11 @@ export const searchFoodInArea = async (areaId: string, q: string) => {
     return m.items
       .filter((it) => wanted.has(String((it.foodItem as unknown as { _id: unknown })._id)))
       .map((it) => {
-        const food = it.foodItem as unknown as { _id: string; name: string; image: string; imageCredit?: string; category: string; source?: string };
+        const food = it.foodItem as unknown as { _id: string; name: string; image: string; images?: unknown[]; imageCredit?: string; category: string; source?: string };
         return {
           menuId: m.id as string,
           price: it.price,
-          food: { _id: food._id, name: food.name, image: food.image, imageCredit: food.imageCredit, category: food.category, source: food.source ?? 'admin' },
+          food: { _id: food._id, name: food.name, image: food.image, images: food.images, imageCredit: food.imageCredit, category: food.category, source: food.source ?? 'admin' },
           kitchen: { _id: kitchen._id, name: kitchen.name, kitchenName: kitchen.kitchenName, rating: kitchen.rating, area: kitchen.area },
           distanceKm: distanceByArea.get(String(kitchen.areaId)) ?? null,
         };
@@ -236,33 +252,160 @@ export const getWithdrawalHistory = (kitchenId: string) =>
   Withdrawal.find({ kitchen: kitchenId }).sort({ createdAt: -1 });
 
 // ─── Delivery Charge Calculator (shared utility) ─────────
-// ধাপ: একই এরিয়া → sameAreaDeliveryFee (৳২০), একই থানা → sameThanaDeliveryFee, অন্যথায় deliveryBaseFee।
-// তারপর একই বিল্ডিংয়ের অন্য অর্ডার থাকলে cluster discount।
-export const calcDeliveryCharge = async (
-  kitchenAreaId: string | undefined,
-  customerAreaId: string | undefined,
-  activeOrdersInBuilding = 1
-): Promise<number> => {
-  const config = await GlobalConfig.findOne();
-  const baseFee = config?.deliveryBaseFee ?? 50;
-  const sameAreaFee = config?.sameAreaDeliveryFee ?? 20;
-  const sameThanaFee = config?.sameThanaDeliveryFee ?? 35;
-  const discountPerOrder = config?.deliveryDiscountPercentPerOrder ?? 10;
-  const maxDiscount = config?.maxDeliveryDiscount ?? 70;
+// একই এরিয়া → sameAreaDeliveryFee (৳২০)।
+// অন্য এরিয়া → রাস্তার দূরত্বের ধাপ (deliverySlabs, যেমন ২ কিমি ৳২৫ · ৩.৫ কিমি ৳৩০ · ৫ কিমি ৳৪০); শেষ ধাপের বেশি দূরে অর্ডার নয়।
+// দূরত্ব মাপা হয় দুই বিন্দুর মধ্যে: ম্যাপে বসানো পিন থাকলে সেটা, নইলে এরিয়ার কেন্দ্র।
+// রাস্তার দূরত্ব utils/geo.ts থেকে (ক্যাশ → OpenRouteService → আনুমানিক)।
+// এরিয়ার লোকেশনই না থাকলে পুরনো থানাভিত্তিক চার্জ। শেষে একই বিল্ডিংয়ের অন্য অর্ডার থাকলে cluster discount।
+type Config = InstanceType<typeof GlobalConfig> | null;
 
-  let fee = baseFee;
-  if (kitchenAreaId && customerAreaId) {
-    if (kitchenAreaId === customerAreaId) {
-      fee = sameAreaFee;
-    } else {
-      const [a, b] = await Promise.all([
-        Area.findById(kitchenAreaId).select('thana'),
-        Area.findById(customerAreaId).select('thana'),
-      ]);
-      if (a && b && a.thana.equals(b.thana)) fee = sameThanaFee;
+const DEFAULT_SLABS = [{ upToKm: 2, fee: 25 }, { upToKm: 3.5, fee: 30 }, { upToKm: 5, fee: 40 }];
+
+export const deliverySettings = (config: Config) => {
+  const slabs = (config?.deliverySlabs?.length ? config.deliverySlabs : DEFAULT_SLABS)
+    .map((x) => ({ upToKm: Number(x.upToKm), fee: Number(x.fee) }))
+    .filter((x) => x.upToKm > 0 && x.fee >= 0)
+    .sort((a, b) => a.upToKm - b.upToKm);
+  return {
+    sameAreaFee: config?.sameAreaDeliveryFee ?? 20,
+    slabs,
+    maxKm: slabs.length ? slabs[slabs.length - 1].upToKm : 5,
+    roadFactor: config?.roadDistanceFactor ?? 1.4,
+    sameThanaFee: config?.sameThanaDeliveryFee ?? 35,
+    baseFee: config?.deliveryBaseFee ?? 50,
+    discountPerOrder: config?.deliveryDiscountPercentPerOrder ?? 10,
+    maxDiscount: config?.maxDeliveryDiscount ?? 70,
+  };
+};
+type Settings = ReturnType<typeof deliverySettings>;
+
+const withClusterDiscount = (s: Settings, fee: number, activeOrdersInBuilding: number) => {
+  const pct = Math.min(Math.max(activeOrdersInBuilding - 1, 0) * s.discountPerOrder, s.maxDiscount);
+  return Math.round(fee * (1 - pct / 100));
+};
+
+// null = দূরত্ব সর্বোচ্চ সীমার বাইরে
+export const feeFor = (s: Settings, km: number, sameArea: boolean, activeOrdersInBuilding = 1): number | null => {
+  if (sameArea) return withClusterDiscount(s, s.sameAreaFee, activeOrdersInBuilding);
+  const slab = s.slabs.find((x) => km <= x.upToKm);
+  return slab ? withClusterDiscount(s, Math.max(slab.fee, s.sameAreaFee), activeOrdersInBuilding) : null;
+};
+
+export interface DeliveryParty { areaId?: string; location?: { coordinates?: number[] } | null }
+
+export interface DeliveryQuote {
+  charge: number;
+  distanceKm: number | null;            // null = লোকেশন নেই, দূরত্ব জানা যায়নি
+  distanceSource: 'road' | 'estimate' | null;
+  sameArea: boolean;
+  allowed: boolean;
+  maxKm: number;
+}
+
+// পিন থাকলে পিন, নইলে এরিয়ার কেন্দ্র
+const pointsFor = async (parties: DeliveryParty[]): Promise<(LngLat | null)[]> => {
+  const needArea = parties.filter((p) => !hasPoint(p.location) && p.areaId).map((p) => p.areaId!);
+  const areas = needArea.length ? await Area.find({ _id: { $in: needArea } }).select('location').lean() : [];
+  const centers = new Map(areas.map((a) => [String(a._id), a.location?.coordinates as LngLat | undefined]));
+  return parties.map((p) => {
+    if (hasPoint(p.location)) return p.location.coordinates as LngLat;
+    const c = p.areaId ? centers.get(String(p.areaId)) : undefined;
+    return c?.length === 2 ? c : null;
+  });
+};
+
+export const quoteDelivery = async (kitchen: DeliveryParty, customer: DeliveryParty, activeOrdersInBuilding = 1): Promise<DeliveryQuote> => {
+  const s = deliverySettings(await GlobalConfig.findOne());
+  const sameArea = !!kitchen.areaId && String(kitchen.areaId) === String(customer.areaId);
+  if (sameArea) {
+    return { charge: feeFor(s, 0, true, activeOrdersInBuilding)!, distanceKm: 0, distanceSource: null, sameArea, allowed: true, maxKm: s.maxKm };
+  }
+  const [kp, cp] = await pointsFor([kitchen, customer]);
+  if (kp && cp) {
+    const [{ km, source }] = await roadDistancesKm(cp, [kp], s.roadFactor);
+    const fee = feeFor(s, km, false, activeOrdersInBuilding);
+    return { charge: fee ?? 0, distanceKm: km, distanceSource: source, sameArea, allowed: fee !== null, maxKm: s.maxKm };
+  }
+  // লোকেশন নেই → পুরনো থানাভিত্তিক নিয়ম
+  const [a, b] = await Promise.all([
+    kitchen.areaId ? Area.findById(kitchen.areaId).select('thana') : null,
+    customer.areaId ? Area.findById(customer.areaId).select('thana') : null,
+  ]);
+  const fee = a && b && a.thana.equals(b.thana) ? s.sameThanaFee : s.baseFee;
+  return { charge: withClusterDiscount(s, fee, activeOrdersInBuilding), distanceKm: null, distanceSource: null, sameArea, allowed: true, maxKm: s.maxKm };
+};
+
+// ─── গ্রাহকের ব্রাউজ পেজ: নিজের এরিয়া + radiusKm-এর (রাস্তার দূরত্বে) মধ্যের কিচেন, চার্জসহ ───
+// point = গ্রাহকের ঠিকানার পিন (না থাকলে এরিয়ার কেন্দ্র)। কিচেনের আসল লোকেশন রেসপন্সে কখনো যায় না।
+export const browseKitchens = async (areaId: string, radiusKm?: number, point?: LngLat | null) => {
+  const config = await GlobalConfig.findOne();
+  const s = deliverySettings(config);
+  const wanted = Number.isFinite(radiusKm) ? Number(radiusKm) : config?.nearbyRadiusKm ?? 3;
+  const radius = Math.min(Math.max(wanted, 0), s.maxKm);
+
+  // প্রথমে সোজা দূরত্বে এরিয়া বাছাই (পিন এরিয়ার কেন্দ্র থেকে একটু সরে থাকতে পারে, তাই +১.৫ কিমি)
+  const nearby = radius > 0 ? await findNearbyAreas(areaId, radius + 1.5, 300) : [];
+  const areaIds = [areaId, ...nearby.map((a) => String(a._id))];
+
+  const kitchens = await User.find({
+    role: 'kitchen', isApproved: true, isActive: true, areaId: { $in: areaIds },
+  }).select(KITCHEN_PUBLIC_FIELDS).sort({ rating: -1, totalRatings: -1 });
+
+  const others = kitchens.filter((k) => String(k.areaId) !== areaId);
+  const distanceById = new Map<string, { km: number; source: 'road' | 'estimate' }>();
+  if (others.length) {
+    const pins = await User.find({ _id: { $in: others.map((k) => k._id) } }).select('+kitchenLocation areaId').lean();
+    const pinById = new Map(pins.map((p) => [String(p._id), p.kitchenLocation]));
+    const [origin, ...kPoints] = await pointsFor([
+      { areaId, location: point ? { coordinates: point } : null },
+      ...others.map((k) => ({ areaId: String(k.areaId), location: pinById.get(k.id) })),
+    ]);
+    if (origin) {
+      const valid = others.map((k, i) => ({ k, p: kPoints[i] })).filter((x): x is { k: typeof x.k; p: LngLat } => !!x.p);
+      const dists = await roadDistancesKm(origin, valid.map((x) => x.p), s.roadFactor);
+      valid.forEach((x, i) => distanceById.set(x.k.id, dists[i]));
     }
   }
 
-  const discountPct = Math.min(Math.max(activeOrdersInBuilding - 1, 0) * discountPerOrder, maxDiscount);
-  return Math.round(fee * (1 - discountPct / 100));
+  const inRange = kitchens.filter((k) => String(k.areaId) === areaId || (distanceById.get(k.id)?.km ?? Infinity) <= radius);
+  const withMenus = await withTodayMenus(inRange);
+  return {
+    radiusKm: radius,
+    defaultRadiusKm: Math.min(config?.nearbyRadiusKm ?? 3, s.maxKm),
+    pricing: { sameAreaFee: s.sameAreaFee, slabs: s.slabs, maxKm: s.maxKm },
+    areas: nearby.map((a) => ({ _id: a._id, name: a.name, distanceKm: a.distanceKm })),
+    kitchens: withMenus.map((k) => {
+      const sameArea = String(k.kitchen.areaId) === areaId;
+      const d = distanceById.get(String(k.kitchen._id));
+      const distanceKm = sameArea ? 0 : d?.km ?? 0;
+      return { ...k, distanceKm, distanceSource: sameArea ? null : d?.source ?? null, sameArea, deliveryCharge: feeFor(s, distanceKm, sameArea) ?? 0 };
+    }),
+  };
+};
+
+// ─── হোম পেজের পাবলিক তথ্য (ফ্রন্টএন্ড ISR দিয়ে ১০ মিনিট পরপর নেয়) ───
+// জনপ্রিয় খাবার = গত ৩০ দিনে সবচেয়ে বেশি অর্ডার হওয়া অ্যাডমিন লাইব্রেরির খাবার
+export const getPublicHighlights = async () => {
+  const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+  const [popular, kitchens, areas, delivered, cities] = await Promise.all([
+    Order.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
+      { $match: { createdAt: { $gte: since }, status: { $nin: ['rejected', 'cancelled'] } } },
+      { $unwind: '$items' },
+      { $group: { _id: '$items.foodItem', n: { $sum: '$items.quantity' } } },
+      { $sort: { n: -1 } },
+      { $limit: 24 },
+    ]),
+    User.countDocuments({ role: 'kitchen', isApproved: true, isActive: true }),
+    Area.countDocuments({ isActive: true }),
+    Order.countDocuments({ status: 'delivered' }),
+    Area.distinct('city', { isActive: true }),
+  ]);
+  const rank = new Map(popular.map((p, i) => [String(p._id), i]));
+  const foods = await FoodItem.find({ isActive: true, source: { $ne: 'kitchen' } })
+    .select('name category image images imageCredit source').lean();
+  foods.sort((a, b) => (rank.get(String(a._id)) ?? 999) - (rank.get(String(b._id)) ?? 999));
+  return {
+    foods: foods.slice(0, 8),
+    stats: { kitchens, areas, cities: cities.length, delivered },
+  };
 };

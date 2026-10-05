@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { publicIdFromUrl } from '../utils/images';
 import mongoose from 'mongoose';
 import { getAuth } from 'firebase-admin/auth';
 import connectDB from '../config/db';
@@ -9,6 +10,8 @@ import { FoodItem, Package, GlobalConfig, IFoodItem } from '../modules/admin/adm
 import { DailyMenu } from '../modules/kitchen/kitchen.model';
 import { Order, OrderStatus, IStatusEvent } from '../modules/order/order.model';
 import { DeliveryTask } from '../modules/delivery/delivery.model';
+import { StaffRole } from '../modules/staff/staff.model';
+import { Permission } from '../utils/permissions';
 import { Subscription } from '../modules/subscription/subscription.model';
 
 // ডেমো ডেটা: কিচেন, ডেলিভারি বয়, গ্রাহক, খাবার, প্যাকেজ, আজকের মেনু ও গত ১৪ দিনের অর্ডার।
@@ -19,67 +22,213 @@ const RESET = process.argv.includes('--reset');
 
 type Category = IFoodItem['category'];
 // আসল ছবি: Wikimedia Commons থেকে নেওয়া (লাইসেন্স অনুযায়ী ক্রেডিটসহ), Cloudinary-তে হোস্ট করা
-const FOOD_IMAGES: Record<string, { url: string; credit: string }> = {
-  "সাদা ভাত": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087932/shokher-kitchen/foods/food-1.jpg",
-    "credit": "ছবি: Anna Frodesiak — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Steamed_rice_in_bowl_01.jpg)"
-  },
-  "খিচুড়ি": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087938/shokher-kitchen/foods/food-2.jpg",
-    "credit": "ছবি: Souradeep.Dasgupta — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Khichuri_-_Bhog.jpg)"
-  },
-  "পোলাও": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087944/shokher-kitchen/foods/food-3.jpg",
-    "credit": "ছবি: Sumit Surai — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Veg_Pulao_(Indian_fried_rice).jpg)"
-  },
-  "আটার রুটি": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087952/shokher-kitchen/foods/food-4.jpg",
-    "credit": "ছবি: Euniceyeoh07 — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Chapati_roti.jpg)"
-  },
-  "পরোটা": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087958/shokher-kitchen/foods/food-5.jpg",
-    "credit": "ছবি: Shahzaib Damn Cruze — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Paratha_is_a_dough_fried_flatbread_native_to_India_and_Pakistan.jpg)"
-  },
-  "রুই মাছের ঝোল": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087964/shokher-kitchen/foods/food-6.jpg",
-    "credit": "ছবি: Srujay Dulapalli — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Rohu_Fish_Curry.jpg)"
-  },
-  "ইলিশ ভাজা": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087971/shokher-kitchen/foods/food-7.jpg",
-    "credit": "ছবি: Marajozkee — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Fried_Ilish_fish.jpg)"
-  },
-  "মুরগির ঝোল": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087977/shokher-kitchen/foods/food-8.jpg",
-    "credit": "ছবি: Gaurav Dhwaj Khadka — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Chicken_Curry_9.jpg)"
-  },
-  "গরুর মাংস ভুনা": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087982/shokher-kitchen/foods/food-9.jpg",
-    "credit": "ছবি: Munni Akter Mim — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:%E0%A6%97%E0%A6%B0%E0%A7%81%E0%A6%B0_%E0%A6%9D%E0%A6%BE%E0%A6%B2_%E0%A6%AD%E0%A7%81%E0%A6%A8%E0%A6%BE.jpg)"
-  },
-  "মিক্সড সবজি": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087989/shokher-kitchen/foods/food-10.jpg",
-    "credit": "ছবি: Miansari66 — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Mixed_Vegetable_Curry.JPG)"
-  },
-  "মসুর ডাল": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087995/shokher-kitchen/foods/food-11.jpg",
-    "credit": "ছবি: Miansari66 — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Kali_Masoor_Ki_Dal_Ka_Salan.JPG)"
-  },
-  "শসা-টমেটো সালাদ": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088006/shokher-kitchen/foods/food-12.jpg",
-    "credit": "ছবি: Voxbyrox — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Cucumber_onion_and_tomato_salad_with_mint_coriander_and_lemon.jpg)"
-  },
-  "বোরহানি": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088011/shokher-kitchen/foods/food-13.jpg",
-    "credit": "ছবি: Sumit Surai — CC BY-SA 3.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Food-Burhani-Ghol.jpg)"
-  },
-  "ডিম ভুনা": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088017/shokher-kitchen/foods/food-14.jpg",
-    "credit": "ছবি: https://onlybestrecipes.com/egg-curry-recipeegg-curry-recipe/ — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Spicy_Anda_Curry.jpg)"
-  },
-  "আলু ভর্তা": {
-    "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088024/shokher-kitchen/foods/food-15.jpg",
-    "credit": "ছবি: Sm faysal — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Home_made_Alu_vorta_(Bengali_mashed_potato).jpg)"
-  }
+const FOOD_IMAGES: Record<string, { url: string; credit: string }[]> = {
+  "সাদা ভাত": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087932/shokher-kitchen/foods/food-1.jpg",
+      "credit": "ছবি: Anna Frodesiak — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Steamed_rice_in_bowl_01.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202462/shokher-kitchen/foods/food-1-2.jpg",
+      "credit": "ছবি: Calgary Reviews from Calgary, Canada — CC BY 2.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Cooked_white_rice.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202468/shokher-kitchen/foods/food-1-3.jpg",
+      "credit": "ছবি: TKdows 2026 — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:JP_%E6%97%A5%E6%9C%AC_Japan_%E4%BA%AC%E9%83%BD_Kyoto_%E5%9B%9B%E6%A2%9D_Shijo_side_Sukiya_Restaurant_food_cooked_steamed_white_rice_June_2026_N13P_01.jpg)"
+    }
+  ],
+  "খিচুড়ি": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087938/shokher-kitchen/foods/food-2.jpg",
+      "credit": "ছবি: Souradeep.Dasgupta — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Khichuri_-_Bhog.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202472/shokher-kitchen/foods/food-2-2.jpg",
+      "credit": "ছবি: Dkgohil — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Masala_Khichadi.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202477/shokher-kitchen/foods/food-2-3.jpg",
+      "credit": "ছবি: Rajeeb Dutta — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:%E0%A6%96%E0%A6%BF%E0%A6%9A%E0%A7%81%E0%A6%A1%E0%A6%BC%E0%A6%BF_(Khichuri)-MA18.jpg)"
+    }
+  ],
+  "পোলাও": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087944/shokher-kitchen/foods/food-3.jpg",
+      "credit": "ছবি: Sumit Surai — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Veg_Pulao_(Indian_fried_rice).jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202482/shokher-kitchen/foods/food-3-2.jpg",
+      "credit": "ছবি: Mizu basyo at Japanese Wikipedia — CC BY-SA 3.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Polu.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202488/shokher-kitchen/foods/food-3-3.jpg",
+      "credit": "ছবি: GeoO — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Pilaf_of_Uzbekistan,_Yerevan.jpg)"
+    }
+  ],
+  "আটার রুটি": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087952/shokher-kitchen/foods/food-4.jpg",
+      "credit": "ছবি: Euniceyeoh07 — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Chapati_roti.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202493/shokher-kitchen/foods/food-4-2.jpg",
+      "credit": "ছবি: Shahzaib Damn Cruze — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:20210717_171840a.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202499/shokher-kitchen/foods/food-4-3.jpg",
+      "credit": "ছবি: Kamalsahansi — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Tandoori_Roti_in_clay_oven.JPG)"
+    }
+  ],
+  "পরোটা": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087958/shokher-kitchen/foods/food-5.jpg",
+      "credit": "ছবি: Shahzaib Damn Cruze — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Paratha_is_a_dough_fried_flatbread_native_to_India_and_Pakistan.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202504/shokher-kitchen/foods/food-5-2.jpg",
+      "credit": "ছবি: Shahzaib Damn Cruze — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Paratha_is_a_dough_fried_flatbread_of_India_and_Pakistan.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202510/shokher-kitchen/foods/food-5-3.jpg",
+      "credit": "ছবি: Preeti Tamilarasan — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Keema_Paratha_by_Preeti_Tamilarasan.jpg)"
+    }
+  ],
+  "রুই মাছের ঝোল": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087964/shokher-kitchen/foods/food-6.jpg",
+      "credit": "ছবি: Srujay Dulapalli — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Rohu_Fish_Curry.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202515/shokher-kitchen/foods/food-6-2.jpg",
+      "credit": "ছবি: SaranikaC — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Bori_diye_rui_machher_jhol.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202519/shokher-kitchen/foods/food-6-3.jpg",
+      "credit": "ছবি: SaranikaC — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Rui_machher_matha_diye_badhakopi_ghonto.jpg)"
+    }
+  ],
+  "ইলিশ ভাজা": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087971/shokher-kitchen/foods/food-7.jpg",
+      "credit": "ছবি: Marajozkee — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Fried_Ilish_fish.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202525/shokher-kitchen/foods/food-7-2.jpg",
+      "credit": "ছবি: Ferdous — CC BY-SA 3.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Ilish_fry_01.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202529/shokher-kitchen/foods/food-7-3.jpg",
+      "credit": "ছবি: Tahmid Munaz from Dhaka, Bangladesh — CC BY-SA 2.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Panta_Ilish.jpg)"
+    }
+  ],
+  "মুরগির ঝোল": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087977/shokher-kitchen/foods/food-8.jpg",
+      "credit": "ছবি: Gaurav Dhwaj Khadka — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Chicken_Curry_9.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202534/shokher-kitchen/foods/food-8-2.jpg",
+      "credit": "ছবি: Abhilashsnair — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Chicken_curry_Trivandrum.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202539/shokher-kitchen/foods/food-8-3.jpg",
+      "credit": "ছবি: Gaurav Dhwaj Khadka — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Chicken_Curry_5.jpg)"
+    }
+  ],
+  "গরুর মাংস ভুনা": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087982/shokher-kitchen/foods/food-9.jpg",
+      "credit": "ছবি: Munni Akter Mim — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:%E0%A6%97%E0%A6%B0%E0%A7%81%E0%A6%B0_%E0%A6%9D%E0%A6%BE%E0%A6%B2_%E0%A6%AD%E0%A7%81%E0%A6%A8%E0%A6%BE.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202544/shokher-kitchen/foods/food-9-2.jpg",
+      "credit": "ছবি: Dr. Chinchu C. — CC BY 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Kerala_Beef_Curry.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202550/shokher-kitchen/foods/food-9-3.jpg",
+      "credit": "ছবি: AshiqJB007 — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Gorur_Kolija_Bhuna_(Beef_Liver_Curry).jpg)"
+    }
+  ],
+  "মিক্সড সবজি": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087989/shokher-kitchen/foods/food-10.jpg",
+      "credit": "ছবি: Miansari66 — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Mixed_Vegetable_Curry.JPG)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202554/shokher-kitchen/foods/food-10-2.jpg",
+      "credit": "ছবি: Dolon Prova — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Mixed_vegetable_curry_1.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202559/shokher-kitchen/foods/food-10-3.jpg",
+      "credit": "ছবি: Billjones94 — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:A_popular_Bengali_vegetable_curry_made_of_Potatoes_and_Mattars.jpg)"
+    }
+  ],
+  "আলু ভর্তা": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088024/shokher-kitchen/foods/food-15.jpg",
+      "credit": "ছবি: Sm faysal — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Home_made_Alu_vorta_(Bengali_mashed_potato).jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202564/shokher-kitchen/foods/food-15-2.jpg",
+      "credit": "ছবি: Gaurav Dhwaj Khadka — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Aloo_Chokha_1.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202568/shokher-kitchen/foods/food-15-3.jpg",
+      "credit": "ছবি: Ferdous — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Meshed_potato_(alu_bharta).jpg)"
+    }
+  ],
+  "মসুর ডাল": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791087995/shokher-kitchen/foods/food-11.jpg",
+      "credit": "ছবি: Miansari66 — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Kali_Masoor_Ki_Dal_Ka_Salan.JPG)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202573/shokher-kitchen/foods/food-11-2.jpg",
+      "credit": "ছবি: Fumikas Sagisavas — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Red_lentils_(1).jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202579/shokher-kitchen/foods/food-11-3.jpg",
+      "credit": "ছবি: Miansari66 — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Lal_Masoor_Dal_and_Palak.JPG)"
+    }
+  ],
+  "শসা-টমেটো সালাদ": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088006/shokher-kitchen/foods/food-12.jpg",
+      "credit": "ছবি: Voxbyrox — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Cucumber_onion_and_tomato_salad_with_mint_coriander_and_lemon.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202583/shokher-kitchen/foods/food-12-2.jpg",
+      "credit": "ছবি: Alabama Extension — CC0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Cucumber,_Tomato_and_Avocado_Salad.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202588/shokher-kitchen/foods/food-12-3.jpg",
+      "credit": "ছবি: Horacio Cambeiro — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Tomato_and_cucumber_salad.jpg)"
+    }
+  ],
+  "বোরহানি": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088011/shokher-kitchen/foods/food-13.jpg",
+      "credit": "ছবি: Sumit Surai — CC BY-SA 3.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Food-Burhani-Ghol.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202592/shokher-kitchen/foods/food-13-2.jpg",
+      "credit": "ছবি: DarkSpartan — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:A_Glass_of_Borhani.jpg)"
+    }
+  ],
+  "ডিম ভুনা": [
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791088017/shokher-kitchen/foods/food-14.jpg",
+      "credit": "ছবি: https://onlybestrecipes.com/egg-curry-recipeegg-curry-recipe/ — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Spicy_Anda_Curry.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202598/shokher-kitchen/foods/food-14-2.jpg",
+      "credit": "ছবি: Ekabhishek — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Egg_curry_pic.jpg)"
+    },
+    {
+      "url": "https://res.cloudinary.com/dmclys9tv/image/upload/v1791202604/shokher-kitchen/foods/food-14-3.jpg",
+      "credit": "ছবি: Yakshitha — CC BY-SA 4.0, Wikimedia Commons (https://commons.wikimedia.org/wiki/File:Egg_Curry_2022.jpg)"
+    }
+  ]
 };
 
 const FOODS: [string, Category, string, number][] = [
@@ -139,6 +288,50 @@ const KITCHEN_FOODS: Record<string, { name: string; category: Category; price: n
   kitchen2: { name: 'সালমার কালা ভুনা', category: 'মাংস', price: 230, imageOf: 'গরুর মাংস ভুনা' },
   kitchen5: { name: 'পুরান ঢাকার মুরগি রেজালা', category: 'মাংস', price: 170, imageOf: 'মুরগির ঝোল' },
 };
+// Cloudinary URL থেকে publicId (ছবি বদলালে/খাবার মুছলে পুরনো ছবি মোছার জন্য)
+const withPublicIds = (list: { url: string; credit: string }[]) =>
+  list.map((i) => ({ ...i, publicId: publicIdFromUrl(i.url)! }));
+// ─ অ্যাডমিন প্যানেলের রোল (ডেমো) — slug দিয়ে upsert, রিসেটে মোছে না
+const STAFF_ROLES: { slug: string; name: string; description: string; permissions: Permission[] }[] = [
+  {
+    slug: 'sub-admin', name: 'সাব অ্যাডমিন', description: 'স্টাফ ব্যবস্থাপনা ছাড়া প্রায় সব কাজ',
+    permissions: ['dashboard.view', 'orders.view', 'orders.manage', 'users.view', 'users.manage', 'approvals.manage',
+      'foods.manage', 'packages.manage', 'locations.manage', 'finance.view', 'finance.manage', 'config.manage'],
+  },
+  {
+    slug: 'manager', name: 'ম্যানেজার', description: 'দৈনিক অপারেশন — অর্ডার, ইউজার, অ্যাপ্রুভাল, খাবার',
+    permissions: ['dashboard.view', 'orders.view', 'orders.manage', 'users.view', 'users.manage', 'approvals.manage',
+      'foods.manage', 'packages.manage', 'locations.manage', 'finance.view'],
+  },
+  {
+    slug: 'accounts', name: 'অ্যাকাউন্টস', description: 'আয়-ব্যয়, উইথড্র অ্যাপ্রুভাল',
+    permissions: ['dashboard.view', 'finance.view', 'finance.manage', 'orders.view'],
+  },
+  {
+    slug: 'support', name: 'কাস্টমার সাপোর্ট', description: 'অর্ডার দেখা/বাতিল, ইউজারের তথ্য দেখা',
+    permissions: ['orders.view', 'orders.manage', 'users.view'],
+  },
+  {
+    slug: 'moderator', name: 'কনটেন্ট মডারেটর', description: 'খাবার, প্যাকেজ, লোকেশন আর নতুন কিচেন যাচাই',
+    permissions: ['foods.manage', 'packages.manage', 'locations.manage', 'approvals.manage'],
+  },
+];
+const STAFF: { key: string; name: string; phone: string; role: string }[] = [
+  { key: 'subadmin', name: 'রাশেদুল ইসলাম', phone: '01710000001', role: 'sub-admin' },
+  { key: 'manager', name: 'নাদিয়া সুলতানা', phone: '01710000002', role: 'manager' },
+  { key: 'accounts', name: 'কামরুল হাসান', phone: '01710000003', role: 'accounts' },
+  { key: 'support', name: 'মিতু আক্তার', phone: '01710000004', role: 'support' },
+  { key: 'moderator', name: 'তারেক মাহমুদ', phone: '01710000005', role: 'moderator' },
+];
+
+// ডেমো ম্যাপ পিন: এরিয়ার কেন্দ্র থেকে এলোমেলো ১৫০–৪৫০ মিটার দূরে (কিছু গ্রাহকের পিন থাকে না — এরিয়ার কেন্দ্র ধরা হয়)
+const jitterPin = (area: { location?: { coordinates?: number[] } }) => {
+  const c = area.location?.coordinates;
+  if (!c || c.length !== 2) return undefined;
+  const meters = 150 + Math.random() * 300, angle = Math.random() * 2 * Math.PI;
+  const dLat = (meters * Math.cos(angle)) / 111320, dLng = (meters * Math.sin(angle)) / (111320 * Math.cos((c[1] * Math.PI) / 180));
+  return { type: 'Point' as const, coordinates: [Math.round((c[0] + dLng) * 1e6) / 1e6, Math.round((c[1] + dLat) * 1e6) / 1e6] };
+};
 const rand = <T>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 const randInt = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
 const todayStr = () => new Date().toISOString().split('T')[0];
@@ -187,10 +380,10 @@ async function seed() {
   // ─ খাবার ও প্যাকেজ
   const foods = [];
   for (const [name, category] of FOODS) {
-    const { url: image, credit: imageCredit } = FOOD_IMAGES[name];
+    const images = withPublicIds(FOOD_IMAGES[name]);
     foods.push(await FoodItem.findOneAndUpdate(
       { name, kitchen: null },
-      { $set: { image, imageCredit, category, source: 'admin', isActive: true }, $setOnInsert: { name } },
+      { $set: { images, image: images[0].url, imageCredit: images[0].credit, category, source: 'admin', isActive: true }, $setOnInsert: { name } },
       { upsert: true, returnDocument: 'after' }
     ));
   }
@@ -210,7 +403,7 @@ async function seed() {
     kitchens.push(await User.create({
       firebaseUid: await firebaseUid(k.key, k.name), name: k.name, email: email(k.key), phone: k.phone, role: 'kitchen',
       isApproved: k.approved !== false, kitchenName: k.kitchenName, kitchenDescription: k.desc,
-      areaId: area._id, area: area.name, buildingAddress: `${area.name} মেইন রোড`,
+      areaId: area._id, area: area.name, buildingAddress: `${area.name} মেইন রোড`, kitchenLocation: jitterPin(area),
       rating: k.rating, totalRatings: k.rating ? randInt(20, 180) : 0, orderLimit: 30, nidNumber: `199${randInt(1000000, 9999999)}`,
     }));
   }
@@ -220,12 +413,12 @@ async function seed() {
   const menuPrices = new Map<string, Map<string, number>>();
   for (const k of activeKitchens) {
     const picks = [...FOODS].sort(() => Math.random() - 0.5).slice(0, randInt(5, 7));
-    const items = picks.map(([n]) => ({ foodItem: byName.get(n)!._id, price: basePrice.get(n)! + randInt(-2, 4) * 5 }));
+    const items = picks.map(([n]) => ({ foodItem: byName.get(n)!._id, price: Math.max(5, basePrice.get(n)! + randInt(-2, 4) * 5) }));
     // কিচেন মালিকের নিজের তৈরি খাবার (ডেমো) — সার্চে অ্যাডমিন লাইব্রেরির পরে দেখাবে
     const own = KITCHEN_FOODS[KITCHENS.find((x) => email(x.key) === k.email)!.key];
     if (own) {
       const f = await FoodItem.create({
-        name: own.name, category: own.category, image: FOOD_IMAGES[own.imageOf].url, imageCredit: FOOD_IMAGES[own.imageOf].credit,
+        name: own.name, category: own.category, images: withPublicIds(FOOD_IMAGES[own.imageOf]).slice(0, 2),
         source: 'kitchen', kitchen: k._id, createdBy: k._id,
       });
       items.push({ foodItem: f._id, price: own.price });
@@ -250,10 +443,10 @@ async function seed() {
   const customers = [];
   for (const c of CUSTOMERS) {
     const home = await findArea(c.area, c.city);
-    const addresses = [{ label: 'বাসা', areaId: home._id, buildingName: c.building, addressLine: c.line, phone: c.phone, isDefault: true }];
+    const addresses = [{ label: 'বাসা', areaId: home._id, buildingName: c.building, addressLine: c.line, phone: c.phone, isDefault: true, location: jitterPin(home) }];
     if (c.office) {
       const office = await findArea(c.office[0], c.city);
-      addresses.push({ label: 'অফিস', areaId: office._id, buildingName: c.office[1], addressLine: c.office[2], phone: c.phone, isDefault: false });
+      addresses.push({ label: 'অফিস', areaId: office._id, buildingName: c.office[1], addressLine: c.office[2], phone: c.phone, isDefault: false, location: undefined });
     }
     customers.push(await User.create({
       firebaseUid: await firebaseUid(c.key, c.name), name: c.name, email: email(c.key), phone: c.phone, role: 'user',
@@ -287,7 +480,7 @@ async function seed() {
       const items = chosen.map(([foodItem, price]) => ({ foodItem, price, quantity: randInt(1, 2) }));
       const totalAmount = items.reduce((s, it) => s + it.price * it.quantity, 0);
       const kInfo = areaInfo.get(String(kitchen.areaId))!;
-      const deliveryCharge = String(kitchen.areaId) === String(address.areaId) ? 20 : kInfo.thanaId === cust.thanaId ? 35 : 50;
+      const deliveryCharge = String(kitchen.areaId) === String(address.areaId) ? 20 : kInfo.thanaId === cust.thanaId ? 30 : 40; // ডেমো ইতিহাস: মোটামুটি ধাপের চার্জ
 
       const status = day === 0 ? rand(TODAY_STATUSES) : rand(FINAL);
       const createdAt = new Date();
@@ -330,7 +523,7 @@ async function seed() {
 
       if (needsDelivery && boy && ['picked_up', 'delivered'].includes(status)) {
         const task = await DeliveryTask.create({
-          deliveryBoy: boy._id, order: order._id, earning: Math.round(deliveryCharge * 0.9),
+          deliveryBoy: boy._id, order: order._id, earning: Math.round(deliveryCharge * 0.92),
           pickedUpAt: statusHistory.find((h) => h.status === 'picked_up')?.at,
           deliveredAt: status === 'delivered' ? last : undefined,
         });
@@ -340,11 +533,29 @@ async function seed() {
     }
   }
 
+  // ─ অ্যাডমিন রোল ও স্টাফ
+  const roleBySlug = new Map<string, mongoose.Types.ObjectId>();
+  for (const role of STAFF_ROLES) {
+    const doc = await StaffRole.findOneAndUpdate(
+      { slug: role.slug },
+      { $set: { name: role.name, description: role.description, permissions: role.permissions, isActive: true } },
+      { upsert: true, returnDocument: 'after' }
+    );
+    roleBySlug.set(role.slug, doc!._id as mongoose.Types.ObjectId);
+  }
+  for (const st of STAFF) {
+    await User.create({
+      firebaseUid: await firebaseUid(st.key, st.name), name: st.name, email: email(st.key), phone: st.phone,
+      role: 'admin', isApproved: true, staffRole: roleBySlug.get(st.role),
+    });
+  }
+
   console.log(`✅ ডেমো ডেটা তৈরি: ${kitchens.length}টি কিচেন, ${boys.length}টি ডেলিভারি বয়, ${customers.length}জন গ্রাহক, ${foods.length}টি খাবার, ৩টি প্যাকেজ, ${orderCount}টি অর্ডার`);
   console.log(`\n🔑 সব ডেমো একাউন্টের পাসওয়ার্ড: ${PASSWORD}`);
   console.log('   কিচেন:      ' + KITCHENS.map((k) => email(k.key)).join(', '));
   console.log('   ডেলিভারি:    ' + DELIVERY_BOYS.map((d) => email(d.key)).join(', '));
   console.log('   গ্রাহক:      ' + CUSTOMERS.map((c) => email(c.key)).join(', '));
+  console.log('   স্টাফ:       ' + STAFF.map((st) => `${email(st.key)} (${STAFF_ROLES.find((r) => r.slug === st.role)!.name})`).join(', '));
 }
 
 (async () => {

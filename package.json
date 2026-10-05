@@ -15,6 +15,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": "24.x"
+  },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",

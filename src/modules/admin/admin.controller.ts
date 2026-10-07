@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth';
 import { sendSuccess, sendError } from '../../utils/response';
@@ -152,7 +153,15 @@ export const cancelOrderCtrl = async (req: AuthRequest, res: Response): Promise<
 export const allUsers = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const q = req.query as Record<string, string | undefined>;
-    sendSuccess(res, await adminService.listUsers({ role: q.role, q: q.q, status: q.status, page: Number(q.page) }));
+    const num = (v?: string) => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined);
+    const id = (v?: string) => (v && Types.ObjectId.isValid(v) ? v : undefined);
+    sendSuccess(res, await adminService.listUsers({
+      role: q.role, q: q.q, status: q.status, page: num(q.page),
+      cityId: id(q.cityId), thanaId: id(q.thanaId), areaId: id(q.areaId),
+      minOrders: num(q.minOrders), maxOrders: num(q.maxOrders), activity: q.activity,
+      joined: num(q.joined), minRating: num(q.minRating), pin: q.pin, menuToday: q.menuToday,
+      available: q.available, sort: q.sort,
+    }));
   } catch (err: unknown) { sendError(res, (err as Error).message); }
 };
 

@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { FoodItem, Package, GlobalConfig, PackageTier, IFoodItem } from './admin.model';
 import { User } from '../auth/auth.model';
 import { Order, OrderStatus } from '../order/order.model';
@@ -409,40 +410,110 @@ export const adminCancelOrder = async (adminId: string, orderId: string, reason?
 };
 
 // ─── ইউজার ম্যানেজমেন্ট ───────────────────────────────────
-export const listUsers = async (f: { role?: string; q?: string; status?: string; page?: number }) => {
-  const filter: Record<string, unknown> = { role: { $ne: 'admin' } };
-  if (f.role && f.role !== 'all') filter.role = f.role;
-  if (f.status === 'active') Object.assign(filter, { isActive: true });
-  if (f.status === 'blocked') Object.assign(filter, { isActive: false });
-  if (f.status === 'pending') Object.assign(filter, { isActive: true, isApproved: false });
+export interface UserListFilter {
+  role?: string; q?: string; status?: string; page?: number;
+  cityId?: string; thanaId?: string; areaId?: string;
+  minOrders?: number; maxOrders?: number;
+  activity?: string;      // recent30 | inactive30 | never
+  joined?: number;        // শেষ কত দিনে যোগ দিয়েছেন
+  minRating?: number;     // কিচেন
+  pin?: string;           // yes | no — কিচেনের ম্যাপ পিন
+  menuToday?: string;     // yes | no — আজ মেনু দিয়েছে কিনা
+  available?: string;     // yes | no — ডেলিভারি বয়
+  sort?: string;          // newest | oldest | orders | orders_asc | amount | rating | name | last_order
+}
+
+const DAY_MS = 86_400_000;
+
+export const listUsers = async (f: UserListFilter) => {
+  const and: Record<string, unknown>[] = [{ role: { $ne: 'admin' } }];
+  if (f.role && f.role !== 'all') and.push({ role: f.role });
+  if (f.status === 'active') and.push({ isActive: true, isApproved: true });
+  if (f.status === 'blocked') and.push({ isActive: false });
+  if (f.status === 'pending') and.push({ isActive: true, isApproved: false });
   if (f.q?.trim()) {
     const rx = escapeRx(f.q);
-    filter.$or = [{ name: rx }, { email: rx }, { phone: rx }, { kitchenName: rx }, { area: rx }];
+    and.push({ $or: [{ name: rx }, { email: rx }, { phone: rx }, { kitchenName: rx }, { area: rx }] });
   }
-  const limit = 25;
-  const page = Math.max(Number(f.page) || 1, 1);
-  const [users, total] = await Promise.all([
-    User.find(filter)
-      .select('name email phone role isActive isApproved area kitchenName rating orderLimit walletBalance deliveryAreaIds createdAt')
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit),
-    User.countDocuments(filter),
-  ]);
 
-  // প্রতিটি ইউজারের অর্ডার সংখ্যা (রোল অনুযায়ী: গ্রাহক/কিচেন/ডেলিভারি বয়)
-  const ids = users.map((u) => u._id);
+  // এলাকা: শহর → থানা → এরিয়া, যেটা সবচেয়ে নির্দিষ্ট সেটা ধরে
+  if (f.areaId || f.thanaId || f.cityId) {
+    const areaIds = f.areaId
+      ? [new Types.ObjectId(f.areaId)]
+      : (await Area.find(f.thanaId ? { thana: f.thanaId } : { city: f.cityId }).select('_id').lean()).map((a) => a._id);
+    and.push({ $or: [{ areaId: { $in: areaIds } }, { 'addresses.areaId': { $in: areaIds } }, { deliveryAreaIds: { $in: areaIds } }] });
+  }
+  if (f.joined) and.push({ createdAt: { $gte: new Date(Date.now() - f.joined * DAY_MS) } });
+  if (f.minRating) and.push({ rating: { $gte: f.minRating } });
+  if (f.pin === 'yes') and.push({ 'kitchenLocation.coordinates.1': { $exists: true } });
+  if (f.pin === 'no') and.push({ 'kitchenLocation.coordinates.1': { $exists: false } });
+  if (f.available === 'yes') and.push({ isAvailable: { $ne: false } });
+  if (f.available === 'no') and.push({ isAvailable: false });
+  if (f.menuToday === 'yes' || f.menuToday === 'no') {
+    const ids = await DailyMenu.distinct('kitchen', { date: new Date().toISOString().split('T')[0] });
+    and.push({ _id: f.menuToday === 'yes' ? { $in: ids } : { $nin: ids } });
+  }
+  const filter = { $and: and };
+
+  // প্রথমে মিলে যাওয়া সবার হালকা তথ্য — অর্ডারের হিসাব দিয়ে ফিল্টার/সাজানোর জন্য
+  const matched = await User.find(filter).select('_id name kitchenName rating createdAt').lean();
+  const ids = matched.map((u) => u._id);
+  const group = { n: { $sum: 1 }, amount: { $sum: { $cond: [{ $eq: ['$status', 'delivered'] }, '$totalAmount', 0] } }, last: { $max: '$createdAt' } };
   const [asUser, asKitchen, asBoy] = await Promise.all([
-    Order.aggregate([{ $match: { user: { $in: ids } } }, { $group: { _id: '$user', n: { $sum: 1 } } }]),
-    Order.aggregate([{ $match: { kitchen: { $in: ids } } }, { $group: { _id: '$kitchen', n: { $sum: 1 } } }]),
-    Order.aggregate([{ $match: { deliveryBoy: { $in: ids }, status: 'delivered' } }, { $group: { _id: '$deliveryBoy', n: { $sum: 1 } } }]),
+    Order.aggregate([{ $match: { user: { $in: ids } } }, { $group: { _id: '$user', ...group } }]),
+    Order.aggregate([{ $match: { kitchen: { $in: ids } } }, { $group: { _id: '$kitchen', ...group } }]),
+    Order.aggregate([
+      { $match: { deliveryBoy: { $in: ids }, status: 'delivered' } },
+      { $group: { _id: '$deliveryBoy', n: { $sum: 1 }, amount: { $sum: '$deliveryCharge' }, last: { $max: '$createdAt' } } },
+    ]),
   ]);
-  const count = new Map([...asUser, ...asKitchen, ...asBoy].map((x) => [String(x._id), x.n as number]));
+  type Stat = { n: number; amount: number; last: Date | null };
+  const stats = new Map<string, Stat>([...asUser, ...asKitchen, ...asBoy].map((x) => [String(x._id), { n: x.n, amount: x.amount, last: x.last }]));
+  const statOf = (id: unknown): Stat => stats.get(String(id)) ?? { n: 0, amount: 0, last: null };
+
+  const now = Date.now();
+  let rows = matched.filter((u) => {
+    const st = statOf(u._id);
+    if (f.minOrders !== undefined && st.n < f.minOrders) return false;
+    if (f.maxOrders !== undefined && st.n > f.maxOrders) return false;
+    if (f.activity === 'never' && st.n > 0) return false;
+    if (f.activity === 'recent30' && !(st.last && now - new Date(st.last).getTime() <= 30 * DAY_MS)) return false;
+    if (f.activity === 'inactive30' && (!st.last || now - new Date(st.last).getTime() <= 30 * DAY_MS)) return false;
+    return true;
+  });
+
+  type Row = (typeof rows)[number];
+  const time = (d?: Date | null) => (d ? new Date(d).getTime() : 0);
+  const sorters: Record<string, (a: Row, b: Row) => number> = {
+    oldest: (a, b) => time(a.createdAt) - time(b.createdAt),
+    orders: (a, b) => statOf(b._id).n - statOf(a._id).n,
+    orders_asc: (a, b) => statOf(a._id).n - statOf(b._id).n,
+    amount: (a, b) => statOf(b._id).amount - statOf(a._id).amount,
+    rating: (a, b) => (b.rating ?? 0) - (a.rating ?? 0),
+    name: (a, b) => (a.kitchenName || a.name).localeCompare(b.kitchenName || b.name, 'bn'),
+    last_order: (a, b) => time(statOf(b._id).last) - time(statOf(a._id).last),
+  };
+  rows = rows.sort(sorters[f.sort ?? ''] ?? ((a, b) => time(b.createdAt) - time(a.createdAt)));
+
+  const limit = 25;
+  const total = rows.length;
+  const pages = Math.max(Math.ceil(total / limit), 1);
+  const page = Math.min(Math.max(Number(f.page) || 1, 1), pages);
+  const pageIds = rows.slice((page - 1) * limit, page * limit).map((u) => String(u._id));
+  const docs = await User.find({ _id: { $in: pageIds } })
+    .select('name email phone role isActive isApproved isAvailable area kitchenName rating orderLimit walletBalance deliveryAreaIds createdAt');
+  const byId = new Map(docs.map((d) => [String(d._id), d]));
+
   return {
-    items: users.map((u) => ({ ...u.toObject(), orderCount: count.get(u.id) ?? 0 })),
+    items: pageIds.flatMap((id) => {
+      const d = byId.get(id);
+      if (!d) return [];
+      const st = statOf(id);
+      return [{ ...d.toObject(), orderCount: st.n, orderAmount: st.amount, lastOrderAt: st.last }];
+    }),
     total,
     page,
-    pages: Math.ceil(total / limit),
+    pages,
   };
 };
 
